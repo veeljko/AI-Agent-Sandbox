@@ -1,15 +1,40 @@
 @echo off
 setlocal
 
+set "PROJECT_INPUT_SOURCE=%~1"
+set "PROJECT_OUTPUT_EXE=%~2"
+set "PROJECT_OUTPUT_NAME=%~n2"
+
 call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat" >nul
+if errorlevel 1 exit /b %errorlevel%
+
+pushd "%~dp0"
+if errorlevel 1 exit /b %errorlevel%
+
+set "MAIN_OBJ=%PROJECT_OUTPUT_NAME%.obj"
+set "START_PROCESS_OBJ=StartProcess\StartProcess.obj"
+set "PDB=%PROJECT_OUTPUT_NAME%.pdb"
+
+cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
+  /I "%~dp0krabs" ^
+  /I "%~dp0." ^
+  /c "%PROJECT_INPUT_SOURCE%" ^
+  /Fo"%MAIN_OBJ%" ^
+  /Fd"%PDB%"
 if errorlevel 1 exit /b %errorlevel%
 
 cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
   /I "%~dp0krabs" ^
-  "%~1" ^
-  /Fo:"%~dpn2.obj" ^
-  /Fd:"%~dpn2.pdb" ^
-  /Fe:"%~2" ^
-  /link tdh.lib advapi32.lib ole32.lib
+  /I "%~dp0." ^
+  /c "StartProcess\StartProcess.cpp" ^
+  /Fo"%START_PROCESS_OBJ%" ^
+  /Fd"%PDB%"
+if errorlevel 1 exit /b %errorlevel%
 
-exit /b %errorlevel%
+link /nologo "%MAIN_OBJ%" "%START_PROCESS_OBJ%" ^
+  /OUT:"%PROJECT_OUTPUT_EXE%" ^
+  tdh.lib advapi32.lib ole32.lib
+
+set "BUILD_RESULT=%errorlevel%"
+popd
+exit /b %BUILD_RESULT%
