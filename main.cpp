@@ -1,11 +1,11 @@
-#include "krabs.hpp"
+#include "krabs/krabs.hpp"
 #include <iostream>
 #include <string>
 #include <thread>
 #include <chrono>
 #include <exception>
 #include <cwctype>
-#include <unordered_map>
+#include <map>
 
 
 void stop_stale_trace_session(const wchar_t* session_name) {
@@ -69,7 +69,7 @@ int main() {
     const std::wstring target_folder =
         to_lower(dos_path_to_device_path(L"C:\\Users\\Korisnik\\Desktop\\test"));
     const DWORD target_pid = 0; // 0 = all processes, or set this to cmd/notepad PID.
-    std::unordered_map<uint64_t, std::wstring> file_object_to_path;
+    std::map<uint64_t, std::wstring> file_object_to_path;
 
     krabs::user_trace trace(trace_name);
     krabs::provider<> kernelFileProvider(L"Microsoft-Windows-Kernel-File");
@@ -153,25 +153,25 @@ int main() {
                        << L" pid=" << record.EventHeader.ProcessId
                        << L" tid=" << record.EventHeader.ThreadId;
 
-            if (schema.event_id() == 15 || schema.event_id() == 16) {
-                uint64_t byteOffset = 0;
-                uint32_t ioSize = 0;
-                uint32_t ioFlags = 0;
+            // if (schema.event_id() == 15 || schema.event_id() == 16) {
+            //     uint64_t byteOffset = 0;
+            //     uint32_t ioSize = 0;
+            //     uint32_t ioFlags = 0;
 
-                parser.try_parse(L"ByteOffset", byteOffset);
-                parser.try_parse(L"IOSize", ioSize);
-                if (ioSize == 0) {
-                    parser.try_parse(L"IoSize", ioSize);
-                }
-                parser.try_parse(L"IOFlags", ioFlags);
-                if (ioFlags == 0) {
-                    parser.try_parse(L"IoFlags", ioFlags);
-                }
+            //     parser.try_parse(L"ByteOffset", byteOffset);
+            //     parser.try_parse(L"IOSize", ioSize);
+            //     if (ioSize == 0) {
+            //         parser.try_parse(L"IoSize", ioSize);
+            //     }
+            //     parser.try_parse(L"IOFlags", ioFlags);
+            //     if (ioFlags == 0) {
+            //         parser.try_parse(L"IoFlags", ioFlags);
+            //     }
 
-                std::wcout << L" offset=" << byteOffset
-                           << L" size=" << ioSize
-                           << L" flags=0x" << std::hex << ioFlags << std::dec;
-            }
+            //     std::wcout << L" offset=" << byteOffset
+            //                << L" size=" << ioSize
+            //                << L" flags=0x" << std::hex << ioFlags << std::dec;
+            // }
 
             std::wcout << L" path=" << filePath << std::endl;
         } catch (const std::exception& ex) {
