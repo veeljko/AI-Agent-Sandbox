@@ -1,8 +1,8 @@
+#include "StartProcess/StartProcess.h"
 #include "krabs/krabs.hpp"
 #include <iostream>
 #include <string>
 #include <thread>
-#include <chrono>
 #include <exception>
 #include <cwctype>
 #include <map>
@@ -66,23 +66,25 @@ int main() {
     const wchar_t* trace_name = L"MyTrace";
     stop_stale_trace_session(trace_name);
 
-    const std::wstring target_folder =
-        to_lower(dos_path_to_device_path(L"C:\\Users\\Korisnik\\Desktop\\test"));
-    const DWORD target_pid = 0; // 0 = all processes, or set this to cmd/notepad PID.
+    ManagedJobProcess managedProcess = {};
+    if (!StartCmdSuspendedInJob(managedProcess)) {
+        return 1;
+    }
+
     std::map<uint64_t, std::wstring> file_object_to_path;
 
     krabs::user_trace trace(trace_name);
     krabs::provider<> kernelFileProvider(L"Microsoft-Windows-Kernel-File");
     kernelFileProvider.any(0x10 | 0x20 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800 | 0x1000);
 
-    auto file_callback = [&target_folder, &target_pid, &file_object_to_path](
+    auto file_callback = [&managedProcess, &file_object_to_path](
         const EVENT_RECORD& record,
         const krabs::trace_context& trace_context
     ) {
         try {
             //retrieving event specific data
             krabs::schema schema(record, trace_context.schema_locator);
-            if (target_pid != 0 && record.EventHeader.ProcessId != target_pid) {
+            if (!IsProcessInJob(managedProcess.job, record.EventHeader.ProcessId)) {
                 return;
             }
 
@@ -134,10 +136,6 @@ int main() {
             }
 
             if (filePath.empty()) {
-                return;
-            }
-
-            if (to_lower(filePath).find(target_folder) != 0) {
                 return;
             }
 
@@ -195,15 +193,23 @@ int main() {
         }
     });
 
-    std::wcout << L"Trace radi. Pratim folder: " << target_folder << std::endl;
-    if (target_pid != 0) {
-        std::wcout << L"Pratim samo PID=" << target_pid << std::endl;
+    std::wcout << L"Trace radi. Pratim procese iz JobObject-a." << std::endl;
+
+    if (!ResumeManagedProcess(managedProcess)) {
+        trace.stop();
+        traceThread.join();
+        TerminateProcess(managedProcess.process, 1);
+        WaitForManagedJobToFinish(managedProcess);
+        CloseManagedJobProcess(managedProcess);
+        return 1;
     }
-    std::wcout << L"Obrisi neki fajl u tom folderu, pa pritisni Enter za stop." << std::endl;
-    std::wcin.get();
+
+    std::wcout << L"Zatvori cmd.exe da se program zavrsi." << std::endl;
+    WaitForManagedJobToFinish(managedProcess);
 
     trace.stop();
     traceThread.join();
+    CloseManagedJobProcess(managedProcess);
 
     if (trace_exception) {
         try {

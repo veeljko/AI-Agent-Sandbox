@@ -1,0 +1,30 @@
+# Build outputs
+*.exe
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.iobj
+*.ipdb
+
+# Visual Studio generated directories
+.vs/
+Debug/
+Release/
+x64/
+x86/
+Win32/
+
+# User-specific Visual Studio files
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+
+# Temporary and log files
+*.log
+*.tmp
+*.bak
+
+# Keep vendored tooling
+!krabs/.nuget/NuGet.exe
