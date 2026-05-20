@@ -1,36 +1,16 @@
 #include "StartProcess.h"
 
+#include <exception>
 #include <iostream>
 
-struct ResumeContext {
-    HANDLE threadHandle = nullptr;
-    DWORD resumeResult = 0;
-    DWORD error = ERROR_SUCCESS;
-};
-
-DWORD WINAPI ResumeProcessThread(LPVOID parameter) {
-    ResumeContext* context = static_cast<ResumeContext*>(parameter);
-
-    context->resumeResult = ResumeThread(context->threadHandle);
-    if (context->resumeResult == static_cast<DWORD>(-1)) {
-        context->error = GetLastError();
-        return 1;
-    }
-
-    context->error = ERROR_SUCCESS;
-    return 0;
-}
-
-DWORD WINAPI JobMonitorThread(LPVOID parameter) {
-    ManagedJobProcess* managedProcess = static_cast<ManagedJobProcess*>(parameter);
-
+bool MonitorJob(ManagedJobProcess& managedProcess) {
     for (;;) {
         DWORD message = 0;
         ULONG_PTR completionKey = 0;
         LPOVERLAPPED overlapped = nullptr;
 
         BOOL ok = GetQueuedCompletionStatus(
-            managedProcess->completionPort,
+            managedProcess.completionPort,
             &message,
             &completionKey,
             &overlapped,
@@ -38,22 +18,22 @@ DWORD WINAPI JobMonitorThread(LPVOID parameter) {
 
         if (!ok) {
             std::cerr << "GetQueuedCompletionStatus failed. GetLastError = " << GetLastError() << '\n';
-            return 1;
+            return false;
         }
 
-        if (reinterpret_cast<HANDLE>(completionKey) != managedProcess->job) {
+        if (reinterpret_cast<HANDLE>(completionKey) != managedProcess.job) {
             continue;
         }
 
         if (message == JOB_OBJECT_MSG_NEW_PROCESS ||
             message == JOB_OBJECT_MSG_EXIT_PROCESS ||
             message == JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS) {
-            PrintProcessesInJob(managedProcess->job);
+            PrintProcessesInJob(managedProcess.job);
             continue;
         }
 
         if (message == JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO) {
-            return 0;
+            return true;
         }
     }
 }
@@ -123,7 +103,7 @@ bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess) {
     si.cb = sizeof(si);
 
     wchar_t cmdLine[] = L"C:\\Windows\\System32\\cmd.exe";
-
+    wchar_t workingDir[] = L"C:\\Users\\Korisnik\\Desktop\\test";
     if (!CreateProcessW(
             nullptr,
             cmdLine,
@@ -132,7 +112,7 @@ bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess) {
             FALSE,
             CREATE_NEW_CONSOLE | CREATE_SUSPENDED,
             nullptr,
-            nullptr,
+            workingDir,
             &si,
             &pi)) {
         std::cerr << "CreateProcessW failed. GetLastError = " << GetLastError() << '\n';
@@ -182,16 +162,13 @@ bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess) {
         return false;
     }
 
-    managedProcess.jobMonitorThread = CreateThread(
-        nullptr,
-        0,
-        JobMonitorThread,
-        &managedProcess,
-        0,
-        nullptr);
-
-    if (managedProcess.jobMonitorThread == nullptr) {
-        std::cerr << "CreateThread for JobMonitor failed. GetLastError = " << GetLastError() << '\n';
+    try {
+        managedProcess.jobMonitorSucceeded = false;
+        managedProcess.jobMonitorThread = std::thread([&managedProcess]() {
+            managedProcess.jobMonitorSucceeded = MonitorJob(managedProcess);
+        });
+    } catch (const std::exception& ex) {
+        std::cerr << "std::thread for JobMonitor failed: " << ex.what() << '\n';
         TerminateProcess(managedProcess.process, 1);
         CloseManagedJobProcess(managedProcess);
         return false;
@@ -207,27 +184,27 @@ bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess) {
 }
 
 bool ResumeManagedProcess(ManagedJobProcess& managedProcess) {
-    ResumeContext resumeContext = {};
-    resumeContext.threadHandle = managedProcess.mainThread;
+    DWORD resumeResult = 0;
+    DWORD error = ERROR_SUCCESS;
 
-    HANDLE resumeWorker = CreateThread(
-        nullptr,
-        0,
-        ResumeProcessThread,
-        &resumeContext,
-        0,
-        nullptr);
+    try {
+        std::thread resumeWorker([&managedProcess, &resumeResult, &error]() {
+            resumeResult = ResumeThread(managedProcess.mainThread);
+            if (resumeResult == static_cast<DWORD>(-1)) {
+                error = GetLastError();
+                return;
+            }
 
-    if (resumeWorker == nullptr) {
-        std::cerr << "CreateThread failed. GetLastError = " << GetLastError() << '\n';
+            error = ERROR_SUCCESS;
+        });
+        resumeWorker.join();
+    } catch (const std::exception& ex) {
+        std::cerr << "std::thread failed: " << ex.what() << '\n';
         return false;
     }
 
-    WaitForSingleObject(resumeWorker, INFINITE);
-    CloseHandle(resumeWorker);
-
-    if (resumeContext.resumeResult == static_cast<DWORD>(-1)) {
-        std::cerr << "ResumeThread failed. GetLastError = " << resumeContext.error << '\n';
+    if (resumeResult == static_cast<DWORD>(-1)) {
+        std::cerr << "ResumeThread failed. GetLastError = " << error << '\n';
         return false;
     }
 
@@ -237,18 +214,13 @@ bool ResumeManagedProcess(ManagedJobProcess& managedProcess) {
 }
 
 bool WaitForManagedJobToFinish(ManagedJobProcess& managedProcess) {
-    if (managedProcess.jobMonitorThread == nullptr) {
+    if (!managedProcess.jobMonitorThread.joinable()) {
         return false;
     }
 
-    WaitForSingleObject(managedProcess.jobMonitorThread, INFINITE);
+    managedProcess.jobMonitorThread.join();
 
-    DWORD exitCode = 1;
-    GetExitCodeThread(managedProcess.jobMonitorThread, &exitCode);
-    CloseHandle(managedProcess.jobMonitorThread);
-    managedProcess.jobMonitorThread = nullptr;
-
-    if (exitCode != 0) {
+    if (!managedProcess.jobMonitorSucceeded) {
         return false;
     }
 
@@ -258,9 +230,15 @@ bool WaitForManagedJobToFinish(ManagedJobProcess& managedProcess) {
 }
 
 void CloseManagedJobProcess(ManagedJobProcess& managedProcess) {
-    if (managedProcess.jobMonitorThread != nullptr) {
-        CloseHandle(managedProcess.jobMonitorThread);
-        managedProcess.jobMonitorThread = nullptr;
+    if (managedProcess.jobMonitorThread.joinable()) {
+        if (managedProcess.completionPort != nullptr) {
+            PostQueuedCompletionStatus(
+                managedProcess.completionPort,
+                JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO,
+                reinterpret_cast<ULONG_PTR>(managedProcess.job),
+                nullptr);
+        }
+        managedProcess.jobMonitorThread.join();
     }
 
     if (managedProcess.completionPort != nullptr) {

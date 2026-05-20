@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <thread>
 #include <vector>
 
 struct ManagedJobProcess {
@@ -9,7 +10,8 @@ struct ManagedJobProcess {
     HANDLE completionPort = nullptr;
     HANDLE process = nullptr;
     HANDLE mainThread = nullptr;
-    HANDLE jobMonitorThread = nullptr;
+    std::thread jobMonitorThread;
+    bool jobMonitorSucceeded = false;
     DWORD processId = 0;
     DWORD threadId = 0;
 };
