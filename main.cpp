@@ -1,4 +1,5 @@
 #include "StartProcess/StartProcess.h"
+#include "NormalizePath/NormalizePath.h"
 #include "krabs/krabs.hpp"
 #include <iostream>
 #include <string>
@@ -171,7 +172,7 @@ int main() {
             //                << L" flags=0x" << std::hex << ioFlags << std::dec;
             // }
 
-            std::wcout << L" path=" << filePath << std::endl;
+            std::wcout << L" path=" << NormalizeFilePath(filePath) << std::endl;
         } catch (const std::exception& ex) {
             std::cerr << "Callback error: " << ex.what() << std::endl;
         } catch (...) {

@@ -13,6 +13,7 @@ if errorlevel 1 exit /b %errorlevel%
 
 set "MAIN_OBJ=%PROJECT_OUTPUT_NAME%.obj"
 set "START_PROCESS_OBJ=StartProcess\StartProcess.obj"
+set "NORMALIZE_PATH_OBJ=NormalizePath\NormalizePath.obj"
 set "PDB=%PROJECT_OUTPUT_NAME%.pdb"
 
 cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
@@ -31,7 +32,15 @@ cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
   /Fd"%PDB%"
 if errorlevel 1 exit /b %errorlevel%
 
-link /nologo "%MAIN_OBJ%" "%START_PROCESS_OBJ%" ^
+cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
+  /I "%~dp0krabs" ^
+  /I "%~dp0." ^
+  /c "NormalizePath\NormalizePath.cpp" ^
+  /Fo"%NORMALIZE_PATH_OBJ%" ^
+  /Fd"%PDB%"
+if errorlevel 1 exit /b %errorlevel%
+
+link /nologo "%MAIN_OBJ%" "%START_PROCESS_OBJ%" "%NORMALIZE_PATH_OBJ%" ^
   /OUT:"%PROJECT_OUTPUT_EXE%" ^
   tdh.lib advapi32.lib ole32.lib
 
