@@ -17,13 +17,13 @@ bool IsTargetPath(const std::wstring& path){
     return _wcsicmp(normalizedPath.c_str(), targetPath.c_str()) == 0;
 };
 
-void PrintAccess(const wchar_t* eventName, const std::wstring& path, int32_t& processId) {
+void PrintAccess(const wchar_t* eventName, const std::wstring& path, uint32_t processId) {
     std::wcout << L"\n[" << eventName << L"] " << counter++ << '\n';
     std::wcout << L"Process Id: " << processId << L"\n";
     std::wcout << L"Path: " << NormalizeFilePath(path) << L"\n";
 };
 
-void PrintRename(const std::wstring& oldPath, const std::wstring& newPath, int32_t& processId) {
+void PrintRename(const std::wstring& oldPath, const std::wstring& newPath, uint32_t processId) {
     std::wcout << L"\n[RENAME]\n";
     std::wcout << counter++ << L"\n";
     std::wcout << L"Process Id: " << processId << L"\n";
@@ -41,7 +41,7 @@ void PrintRename(const std::wstring& oldPath, const std::wstring& newPath, int32
     }
 };
 
-bool try_parse_pointer(krabs::parser& parser, const wchar_t* name, uint64_t& out) {
+bool TryParsePointer(krabs::parser& parser, const wchar_t* name, uint64_t& out) {
     try {
         krabs::pointer ptr;
         if (parser.try_parse(name, ptr)) {
@@ -73,14 +73,14 @@ bool try_parse_pointer(krabs::parser& parser, const wchar_t* name, uint64_t& out
 }
 
 // 12 = Create/Open
-void CreateOpenHandler(krabs::parser& parser, int32_t processId){
+void CreateOpenHandler(krabs::parser& parser, uint32_t processId){
     std::wstring filePath;
     uint64_t fileObject = 0;
     uint32_t raw = 0;
 
     parser.try_parse(L"FileName", filePath);
     parser.try_parse(L"CreateOptions", raw);
-    try_parse_pointer(parser, L"FileObject", fileObject);
+    TryParsePointer(parser, L"FileObject", fileObject);
 
     if (fileObject != 0 && !filePath.empty()) {
         file_object_to_path[fileObject] = NormalizeFilePath(filePath);
@@ -92,13 +92,12 @@ void CreateOpenHandler(krabs::parser& parser, int32_t processId){
 }
 
 // 27 = RenamePath
-// Ovo je najkorisniji rename event, jer uglavnom ima FilePath.
-void RenamePathHandler(krabs::parser& parser, int32_t processId){
+void RenamePathHandler(krabs::parser& parser, uint32_t processId){
     std::wstring newPath;
     uint64_t fileObject = 0;
 
     parser.try_parse(L"FilePath", newPath);
-    try_parse_pointer(parser, L"FileObject", fileObject);
+    TryParsePointer(parser, L"FileObject", fileObject);
 
     std::wstring oldPath;
 
@@ -120,11 +119,9 @@ void RenamePathHandler(krabs::parser& parser, int32_t processId){
     }
 }
 // 19 = Rename
-// Ovaj event ne mora da ima novu putanju, ali može da kaže da je FileObject
-// koji već znamo bio rename-ovan.
-void Rename(krabs::parser& parser, int32_t processId){
+void Rename(krabs::parser& parser, uint32_t processId){
     uint64_t fileObject = 0;
-    try_parse_pointer(parser, L"FileObject", fileObject);
+    TryParsePointer(parser, L"FileObject", fileObject);
 
     auto it = file_object_to_path.find(fileObject);
     if (it != file_object_to_path.end()) {
