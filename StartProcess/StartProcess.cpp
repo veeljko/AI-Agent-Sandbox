@@ -2,6 +2,41 @@
 
 #include <exception>
 #include <iostream>
+#include <mutex>
+#include <unordered_set>
+#include <vector>
+
+namespace {
+    std::mutex g_knownJobPidsMutex;
+    std::unordered_set<DWORD> g_knownJobPids;
+
+    DWORD JobMessageProcessId(LPOVERLAPPED overlapped) {
+        return static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(overlapped));
+    }
+
+    void RememberJobPid(DWORD processId) {
+        if (processId == 0) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(g_knownJobPidsMutex);
+        g_knownJobPids.insert(processId);
+    }
+
+    void RememberJobPids(const std::vector<DWORD>& processIds) {
+        std::lock_guard<std::mutex> lock(g_knownJobPidsMutex);
+        for (DWORD processId : processIds) {
+            if (processId != 0) {
+                g_knownJobPids.insert(processId);
+            }
+        }
+    }
+
+    bool IsKnownJobPid(DWORD processId) {
+        std::lock_guard<std::mutex> lock(g_knownJobPidsMutex);
+        return g_knownJobPids.find(processId) != g_knownJobPids.end();
+    }
+}
 
 bool MonitorJob(ManagedJobProcess& managedProcess) {
     for (;;) {
@@ -25,9 +60,20 @@ bool MonitorJob(ManagedJobProcess& managedProcess) {
             continue;
         }
 
-        if (message == JOB_OBJECT_MSG_NEW_PROCESS ||
-            message == JOB_OBJECT_MSG_EXIT_PROCESS ||
+        DWORD messageProcessId = JobMessageProcessId(overlapped);
+
+        if (message == JOB_OBJECT_MSG_NEW_PROCESS) {
+            RememberJobPid(messageProcessId);
+            std::wcout << L"[JOB] New process: " << messageProcessId << L"\n";
+            PrintProcessesInJob(managedProcess.job);
+            continue;
+        }
+
+        if (message == JOB_OBJECT_MSG_EXIT_PROCESS ||
             message == JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS) {
+            // Nemoj brisati PID iz g_knownJobPids.
+            // ETW eventovi za kratkotrajne procese mogu da stignu tek nakon exit-a.
+            std::wcout << L"[JOB] Process exited: " << messageProcessId << L"\n";
             PrintProcessesInJob(managedProcess.job);
             continue;
         }
@@ -72,15 +118,24 @@ std::vector<DWORD> GetProcessIdsInJob(HANDLE job) {
             processIds.push_back(static_cast<DWORD>(processList->ProcessIdList[i]));
         }
 
+        RememberJobPids(processIds);
         return processIds;
     }
 }
 
 bool IsProcessInJob(HANDLE job, DWORD processId) {
+    // Prvo proveri cache svih PID-eva koji su ikada bili u job-u.
+    // Ovo je bitno za ETW, jer event za kratkotrajan proces moze da stigne
+    // nakon sto je proces vec izasao iz JobObject-a.
+    if (IsKnownJobPid(processId)) {
+        return true;
+    }
+
     std::vector<DWORD> processIds = GetProcessIdsInJob(job);
 
     for (DWORD jobProcessId : processIds) {
         if (jobProcessId == processId) {
+            RememberJobPid(processId);
             return true;
         }
     }
@@ -89,7 +144,9 @@ bool IsProcessInJob(HANDLE job, DWORD processId) {
 }
 
 void PrintProcessesInJob(HANDLE job) {
+    return;
     std::vector<DWORD> processIds = GetProcessIdsInJob(job);
+    RememberJobPids(processIds);
 
     std::wcout << L"Processes in JobObject: " << processIds.size() << L"\n";
     for (DWORD processId : processIds) {
@@ -161,6 +218,9 @@ bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess) {
         CloseManagedJobProcess(managedProcess);
         return false;
     }
+
+    // Obavezno odmah zapamti glavni PID. Nemoj se oslanjati samo na completion-port poruku.
+    RememberJobPid(managedProcess.processId);
 
     try {
         managedProcess.jobMonitorSucceeded = false;

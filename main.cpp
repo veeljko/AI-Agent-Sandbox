@@ -1,10 +1,12 @@
 #include "StartProcess/StartProcess.h"
 #include "NormalizePath/NormalizePath.h"
+#include "FilterFiles/FilterFiles.h"
 #include "krabs/krabs.hpp"
 #include <iostream>
 #include <string>
 #include <thread>
 #include <exception>
+#include <chrono>
 #include <cwctype>
 #include <map>
 
@@ -54,13 +56,34 @@ std::wstring dos_path_to_device_path(const std::wstring& dos_path) {
 }
 
 bool try_parse_pointer(krabs::parser& parser, const wchar_t* name, uint64_t& out) {
-    krabs::pointer ptr;
-    if (!parser.try_parse(name, ptr)) {
-        return false;
+    try {
+        krabs::pointer ptr;
+        if (parser.try_parse(name, ptr)) {
+            out = ptr.address;
+            return true;
+        }
+    } catch (...) {
     }
 
-    out = ptr.address;
-    return true;
+    try {
+        uint64_t value = 0;
+        if (parser.try_parse(name, value)) {
+            out = value;
+            return true;
+        }
+    } catch (...) {
+    }
+
+    try {
+        uint32_t value = 0;
+        if (parser.try_parse(name, value)) {
+            out = value;
+            return true;
+        }
+    } catch (...) {
+    }
+
+    return false;
 }
 
 int main() {
@@ -77,102 +100,51 @@ int main() {
     krabs::user_trace trace(trace_name);
     krabs::provider<> kernelFileProvider(L"Microsoft-Windows-Kernel-File");
     kernelFileProvider.any(0x10 | 0x20 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800 | 0x1000);
-
-    auto file_callback = [&managedProcess, &file_object_to_path](
+    uint32_t counter = 0;
+    auto file_callback = [&managedProcess, &file_object_to_path, &counter](
         const EVENT_RECORD& record,
         const krabs::trace_context& trace_context
     ) {
         try {
             //retrieving event specific data
             krabs::schema schema(record, trace_context.schema_locator);
+
             if (!IsProcessInJob(managedProcess.job, record.EventHeader.ProcessId)) {
                 return;
             }
 
-            if (
-                schema.event_id() != 10 &&
-                schema.event_id() != 11 &&
-                schema.event_id() != 12 &&
-                schema.event_id() != 15 &&
-                schema.event_id() != 16 &&
-                schema.event_id() != 17 &&
-                schema.event_id() != 18 &&
-                schema.event_id() != 26 &&
-                schema.event_id() != 27 &&
-                schema.event_id() != 30) {
-                return;
-            }
+            if (schema.event_id() == 12) {
+                krabs::parser parser(schema);
 
-            krabs::parser parser(schema);
-            std::wstring filePath;
-            uint64_t fileObject = 0;
-            uint64_t fileKey = 0;
+                std::wstring filePath;
+                uint64_t fileObject = 0;
+                uint32_t raw = 0;
 
-            try_parse_pointer(parser, L"FileObject", fileObject);
-            try_parse_pointer(parser, L"FileKey", fileKey);
+                try_parse_pointer(parser, L"FileObject", fileObject);
+                parser.try_parse(L"FileName", filePath);
+                parser.try_parse(L"CreateOptions", raw);
 
-            parser.try_parse(L"FileName", filePath);
-            if (filePath.empty()) {
-                parser.try_parse(L"OpenPath", filePath);
-            }
-            if (filePath.empty()) {
-                parser.try_parse(L"FilePath", filePath);
-            }
-            if (filePath.empty()) {
-                parser.try_parse(L"Path", filePath);
-            }
+                uint32_t createOptions = raw & 0x00FFFFFF;
+                uint32_t createDisposition = (raw >> 24) & 0xFF;
 
-            if (filePath.empty() && fileObject != 0) {
-                auto it = file_object_to_path.find(fileObject);
-                if (it != file_object_to_path.end()) {
-                    filePath = it->second;
+                std::wstring normalizedPath = NormalizeFilePath(filePath);
+
+                if (createOptions & 0x00000001) {
+                    return;
+                    std::wcout << "DIREKTORIJUM\n";
+                }
+
+                if (createOptions & 0x00000040) {
+                    std::wstring normalizedPath = NormalizeFilePath(filePath);
+                    std::wstring targetPath = NormalizeFilePath(L"C:\\Users\\Korisnik\\Desktop\\test\\test.txt");
+                    if (_wcsicmp(normalizedPath.c_str(), targetPath.c_str()) == 0) {
+                        std :: wcout << counter++ <<'\n';
+                        std::wcout << "Process Id: \n" << record.EventHeader.ProcessId << '\n';
+                        std::wcout << "Path:\n" << normalizedPath << '\n';
+                    }
                 }
             }
-
-            if (filePath.empty() && fileKey != 0) {
-                auto it = file_object_to_path.find(fileKey);
-                if (it != file_object_to_path.end()) {
-                    filePath = it->second;
-                }
-            }
-
-            if (filePath.empty()) {
-                return;
-            }
-
-            if (fileObject != 0) {
-                file_object_to_path[fileObject] = filePath;
-            }
-            if (fileKey != 0) {
-                file_object_to_path[fileKey] = filePath;
-            }
-
-            std::wcout << L"File event id=" << schema.event_id()
-                       << L" task=" << schema.task_name()
-                       << L" pid=" << record.EventHeader.ProcessId
-                       << L" tid=" << record.EventHeader.ThreadId;
-
-            // if (schema.event_id() == 15 || schema.event_id() == 16) {
-            //     uint64_t byteOffset = 0;
-            //     uint32_t ioSize = 0;
-            //     uint32_t ioFlags = 0;
-
-            //     parser.try_parse(L"ByteOffset", byteOffset);
-            //     parser.try_parse(L"IOSize", ioSize);
-            //     if (ioSize == 0) {
-            //         parser.try_parse(L"IoSize", ioSize);
-            //     }
-            //     parser.try_parse(L"IOFlags", ioFlags);
-            //     if (ioFlags == 0) {
-            //         parser.try_parse(L"IoFlags", ioFlags);
-            //     }
-
-            //     std::wcout << L" offset=" << byteOffset
-            //                << L" size=" << ioSize
-            //                << L" flags=0x" << std::hex << ioFlags << std::dec;
-            // }
-
-            std::wcout << L" path=" << NormalizeFilePath(filePath) << std::endl;
+            
         } catch (const std::exception& ex) {
             std::cerr << "Callback error: " << ex.what() << std::endl;
         } catch (...) {
@@ -193,6 +165,24 @@ int main() {
             trace_exception = std::current_exception();
         }
     });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    if (trace_exception) {
+        traceThread.join();
+        TerminateProcess(managedProcess.process, 1);
+        WaitForManagedJobToFinish(managedProcess);
+        CloseManagedJobProcess(managedProcess);
+
+        try {
+            std::rethrow_exception(trace_exception);
+        } catch (const std::exception& ex) {
+            std::cerr << "Trace error: " << ex.what() << std::endl;
+            return 1;
+        } catch (...) {
+            std::cerr << "Trace error: unknown exception" << std::endl;
+            return 1;
+        }
+    }
 
     std::wcout << L"Trace radi. Pratim procese iz JobObject-a." << std::endl;
 
