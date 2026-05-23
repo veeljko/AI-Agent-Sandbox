@@ -29,31 +29,6 @@ void stop_stale_trace_session(const wchar_t* session_name) {
     );
 }
 
-std::wstring to_lower(std::wstring value) {
-    for (auto& ch : value) {
-        ch = static_cast<wchar_t>(std::towlower(ch));
-    }
-
-    return value;
-}
-
-std::wstring dos_path_to_device_path(const std::wstring& dos_path) {
-    wchar_t full_path[MAX_PATH] = {};
-    GetFullPathNameW(dos_path.c_str(), MAX_PATH, full_path, nullptr);
-
-    if (full_path[0] == L'\0' || full_path[1] != L':') {
-        return dos_path;
-    }
-
-    wchar_t drive[] = { full_path[0], L':', L'\0' };
-    wchar_t device_name[1024] = {};
-
-    if (QueryDosDeviceW(drive, device_name, 1024) == 0) {
-        return full_path;
-    }
-
-    return std::wstring(device_name) + std::wstring(full_path + 2);
-}
 
 bool try_parse_pointer(krabs::parser& parser, const wchar_t* name, uint64_t& out) {
     try {
@@ -99,58 +74,142 @@ int main() {
 
     krabs::user_trace trace(trace_name);
     krabs::provider<> kernelFileProvider(L"Microsoft-Windows-Kernel-File");
-    kernelFileProvider.any(0x10 | 0x20 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800 | 0x1000);
+    kernelFileProvider.any(
+        0x80  | // Create/Open
+        0x400 | // DeletePath
+        0x800 | // RenamePath / SetLinkPath
+        0x1000  // CreateNewFile
+    );
     uint32_t counter = 0;
     auto file_callback = [&managedProcess, &file_object_to_path, &counter](
         const EVENT_RECORD& record,
         const krabs::trace_context& trace_context
     ) {
         try {
-            //retrieving event specific data
             krabs::schema schema(record, trace_context.schema_locator);
+            krabs::parser parser(schema);
 
             if (!IsProcessInJob(managedProcess.job, record.EventHeader.ProcessId)) {
                 return;
             }
 
-            if (schema.event_id() == 12) {
-                krabs::parser parser(schema);
+            const std::wstring targetPath =
+                NormalizeFilePath(L"C:\\Users\\Korisnik\\Desktop\\test");
 
+            auto IsTargetPath = [&](const std::wstring& path) -> bool {
+                if (path.empty()) {
+                    return false;
+                }
+
+                std::wstring normalizedPath = NormalizeFilePath(path);
+                return _wcsicmp(normalizedPath.c_str(), targetPath.c_str()) == 0;
+            };
+
+            auto PrintAccess = [&](const wchar_t* eventName, const std::wstring& path) {
+                std::wcout << L"\n[" << eventName << L"] " << counter++ << '\n';
+                std::wcout << L"Process Id: " << record.EventHeader.ProcessId << L"\n";
+                std::wcout << L"Path: " << NormalizeFilePath(path) << L"\n";
+            };
+
+            auto PrintRename = [&](
+                const std::wstring& oldPath,
+                const std::wstring& newPath
+            ) {
+                std::wcout << L"\n[RENAME]\n";
+                std::wcout << counter++ << L"\n";
+                std::wcout << L"Process Id: " << record.EventHeader.ProcessId << L"\n";
+
+                if (!oldPath.empty()) {
+                    std::wcout << L"Old path: " << NormalizeFilePath(oldPath) << L"\n";
+                } else {
+                    std::wcout << L"Old path: <unknown>\n";
+                }
+
+                if (!newPath.empty()) {
+                    std::wcout << L"New path: " << NormalizeFilePath(newPath) << L"\n";
+                } else {
+                    std::wcout << L"New path: <unknown>\n";
+                }
+            };
+
+            // 12 = Create/Open
+            if (schema.event_id() == 12) {
                 std::wstring filePath;
                 uint64_t fileObject = 0;
                 uint32_t raw = 0;
 
-                try_parse_pointer(parser, L"FileObject", fileObject);
                 parser.try_parse(L"FileName", filePath);
                 parser.try_parse(L"CreateOptions", raw);
+                try_parse_pointer(parser, L"FileObject", fileObject);
 
+                
+                if (fileObject != 0 && !filePath.empty()) {
+                    file_object_to_path[fileObject] = NormalizeFilePath(filePath);
+                }
+                
                 uint32_t createOptions = raw & 0x00FFFFFF;
-                uint32_t createDisposition = (raw >> 24) & 0xFF;
-
-                std::wstring normalizedPath = NormalizeFilePath(filePath);
-
-                if (createOptions & 0x00000001) {
-                    return;
-                    std::wcout << "DIREKTORIJUM\n";
+                if (!createOptions && IsTargetPath(filePath)) {
+                    PrintAccess(L"CREATE/OPEN test.txt", filePath);
                 }
 
-                if (createOptions & 0x00000040) {
-                    std::wstring normalizedPath = NormalizeFilePath(filePath);
-                    std::wstring targetPath = NormalizeFilePath(L"C:\\Users\\Korisnik\\Desktop\\test\\test.txt");
-                    if (_wcsicmp(normalizedPath.c_str(), targetPath.c_str()) == 0) {
-                        std :: wcout << counter++ <<'\n';
-                        std::wcout << "Process Id: \n" << record.EventHeader.ProcessId << '\n';
-                        std::wcout << "Path:\n" << normalizedPath << '\n';
+                return;
+            }
+
+            // 27 = RenamePath
+            // Ovo je najkorisniji rename event, jer uglavnom ima FilePath.
+            if (schema.event_id() == 27) {
+                std::wstring newPath;
+                uint64_t fileObject = 0;
+
+                parser.try_parse(L"FilePath", newPath);
+                try_parse_pointer(parser, L"FileObject", fileObject);
+
+                std::wstring oldPath;
+
+                auto it = file_object_to_path.find(fileObject);
+                if (it != file_object_to_path.end()) {
+                    oldPath = it->second;
+                }
+
+                bool renamedFromTestTxt = IsTargetPath(oldPath);
+                bool renamedToTestTxt = IsTargetPath(newPath);
+
+                if (renamedFromTestTxt || renamedToTestTxt) {
+                    PrintRename(oldPath, newPath);
+                }
+
+                // Posle rename-a, FileObject sada treba da pokazuje na novu putanju.
+                if (fileObject != 0 && !newPath.empty()) {
+                    file_object_to_path[fileObject] = NormalizeFilePath(newPath);
+                }
+
+                return;
+            }
+
+            // 19 = Rename
+            // Ovaj event ne mora da ima novu putanju, ali može da kaže da je FileObject
+            // koji već znamo bio rename-ovan.
+            if (schema.event_id() == 19) {
+                uint64_t fileObject = 0;
+                try_parse_pointer(parser, L"FileObject", fileObject);
+
+                auto it = file_object_to_path.find(fileObject);
+                if (it != file_object_to_path.end()) {
+                    const std::wstring& oldPath = it->second;
+
+                    if (IsTargetPath(oldPath)) {
+                        PrintRename(oldPath, L"");
                     }
                 }
+
+                return;
             }
-            
+
         } catch (const std::exception& ex) {
             std::cerr << "Callback error: " << ex.what() << std::endl;
         } catch (...) {
             std::cerr << "Callback error: unknown exception" << std::endl;
         }
-
     };
 
     kernelFileProvider.add_on_event_callback(file_callback);
