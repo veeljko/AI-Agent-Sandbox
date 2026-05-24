@@ -5,103 +5,105 @@
 #include <algorithm>
 #include <cwctype>
 
-bool StartsWithIgnoreCase(const std::wstring& value, const std::wstring& prefix) {
-    if (value.size() < prefix.size()) {
-        return false;
+namespace{
+    bool StartsWithIgnoreCase(const std::wstring& value, const std::wstring& prefix) {
+        if (value.size() < prefix.size()) {
+            return false;
+        }
+
+        return _wcsnicmp(value.c_str(), prefix.c_str(), prefix.size()) == 0;
     }
 
-    return _wcsnicmp(value.c_str(), prefix.c_str(), prefix.size()) == 0;
-}
-
-void ReplaceAll(std::wstring& s, wchar_t from, wchar_t to) {
-    std::replace(s.begin(), s.end(), from, to);
-}
-
-std::wstring RemovePrefix(const std::wstring& s, const std::wstring& prefix) {
-    if (StartsWithIgnoreCase(s, prefix)) {
-        return s.substr(prefix.size());
+    void ReplaceAll(std::wstring& s, wchar_t from, wchar_t to) {
+        std::replace(s.begin(), s.end(), from, to);
     }
 
-    return s;
-}
+    std::wstring RemovePrefix(const std::wstring& s, const std::wstring& prefix) {
+        if (StartsWithIgnoreCase(s, prefix)) {
+            return s.substr(prefix.size());
+        }
 
-std::wstring GetFullPathSafe(const std::wstring& path) {
-    DWORD needed = GetFullPathNameW(path.c_str(), 0, nullptr, nullptr);
-
-    if (needed == 0) {
-        return path;
+        return s;
     }
 
-    std::vector<wchar_t> buffer(needed + 1);
+    std::wstring GetFullPathSafe(const std::wstring& path) {
+        DWORD needed = GetFullPathNameW(path.c_str(), 0, nullptr, nullptr);
 
-    DWORD result = GetFullPathNameW(
-        path.c_str(),
-        static_cast<DWORD>(buffer.size()),
-        buffer.data(),
-        nullptr
-    );
+        if (needed == 0) {
+            return path;
+        }
 
-    if (result == 0 || result >= buffer.size()) {
-        return path;
-    }
+        std::vector<wchar_t> buffer(needed + 1);
 
-    return std::wstring(buffer.data());
-}
-
-bool IsBoundaryAfterPrefix(const std::wstring& path, size_t prefixLength) {
-    if (path.size() == prefixLength) {
-        return true;
-    }
-
-    wchar_t ch = path[prefixLength];
-
-    return ch == L'\\' || ch == L'/';
-}
-
-std::wstring DevicePathToDosPath(const std::wstring& inputPath) {
-    wchar_t drivesBuffer[512];
-
-    DWORD len = GetLogicalDriveStringsW(
-        static_cast<DWORD>(std::size(drivesBuffer)),
-        drivesBuffer
-    );
-
-    if (len == 0 || len > std::size(drivesBuffer)) {
-        return inputPath;
-    }
-
-    for (wchar_t* drive = drivesBuffer; *drive != L'\0'; drive += wcslen(drive) + 1) {
-        std::wstring driveRoot = drive;
-        std::wstring driveLetter = driveRoot.substr(0, 2); // "C:"
-
-        wchar_t deviceNameBuffer[512];
-
-        DWORD queryResult = QueryDosDeviceW(
-            driveLetter.c_str(),
-            deviceNameBuffer,
-            static_cast<DWORD>(std::size(deviceNameBuffer))
+        DWORD result = GetFullPathNameW(
+            path.c_str(),
+            static_cast<DWORD>(buffer.size()),
+            buffer.data(),
+            nullptr
         );
 
-        if (queryResult == 0) {
-            continue;
+        if (result == 0 || result >= buffer.size()) {
+            return path;
         }
 
-        std::wstring deviceName = deviceNameBuffer; 
-
-        if (StartsWithIgnoreCase(inputPath, deviceName) &&
-            IsBoundaryAfterPrefix(inputPath, deviceName.size())) {
-            
-            std::wstring rest = inputPath.substr(deviceName.size());
-
-            if (!rest.empty() && (rest[0] == L'\\' || rest[0] == L'/')) {
-                return driveLetter + rest;
-            }
-
-            return driveLetter + L"\\" + rest;
-        }
+        return std::wstring(buffer.data());
     }
 
-    return inputPath;
+    bool IsBoundaryAfterPrefix(const std::wstring& path, size_t prefixLength) {
+        if (path.size() == prefixLength) {
+            return true;
+        }
+
+        wchar_t ch = path[prefixLength];
+
+        return ch == L'\\' || ch == L'/';
+    }
+
+    std::wstring DevicePathToDosPath(const std::wstring& inputPath) {
+        wchar_t drivesBuffer[512];
+
+        DWORD len = GetLogicalDriveStringsW(
+            static_cast<DWORD>(std::size(drivesBuffer)),
+            drivesBuffer
+        );
+
+        if (len == 0 || len > std::size(drivesBuffer)) {
+            return inputPath;
+        }
+
+        for (wchar_t* drive = drivesBuffer; *drive != L'\0'; drive += wcslen(drive) + 1) {
+            std::wstring driveRoot = drive;
+            std::wstring driveLetter = driveRoot.substr(0, 2); // "C:"
+
+            wchar_t deviceNameBuffer[512];
+
+            DWORD queryResult = QueryDosDeviceW(
+                driveLetter.c_str(),
+                deviceNameBuffer,
+                static_cast<DWORD>(std::size(deviceNameBuffer))
+            );
+
+            if (queryResult == 0) {
+                continue;
+            }
+
+            std::wstring deviceName = deviceNameBuffer; 
+
+            if (StartsWithIgnoreCase(inputPath, deviceName) &&
+                IsBoundaryAfterPrefix(inputPath, deviceName.size())) {
+                
+                std::wstring rest = inputPath.substr(deviceName.size());
+
+                if (!rest.empty() && (rest[0] == L'\\' || rest[0] == L'/')) {
+                    return driveLetter + rest;
+                }
+
+                return driveLetter + L"\\" + rest;
+            }
+        }
+
+        return inputPath;
+    }
 }
 
 std::wstring NormalizeFilePath(const std::wstring& originalPath) {

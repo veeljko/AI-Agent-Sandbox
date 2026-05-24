@@ -1,79 +1,111 @@
 #include "ProviderEventsHandlers.h"
-
 #include "../NormalizePath/NormalizePath.h"
+#include "../StartProcess/StartProcess.h"
+#include "../FilterFiles/FilterFiles.h"
+
 #include <iostream>
 #include <map>
 
-static int counter = 0;
 static const std::wstring targetPath = NormalizeFilePath(L"C:\\Users\\Korisnik\\Desktop\\test\\test.txt");
-static std::map<uint64_t, std::wstring> file_object_to_path;
+static const std::wstring workingDirStr = NormalizeFilePath(workingDir);
 
-bool IsTargetPath(const std::wstring& path){
-    if (path.empty()) {
+namespace{
+    constexpr uint32_t kFileDirectoryFile = 0x00000001;
+
+    static int counter = 0;
+    static std::map<uint64_t, std::wstring> file_object_to_path;
+
+
+    bool IsTargetPath(const std::wstring& path){
+        if (path.empty()) {
+            return false;
+        }
+
+        std::wstring normalizedPath = NormalizeFilePath(path);
+        return _wcsicmp(normalizedPath.c_str(), targetPath.c_str()) == 0;
+    };
+
+    bool IsProtectedOutsideWorkingDir(const std::wstring& path) {
+        if (path.empty()) {
+            return false;
+        }
+
+        std::wstring normalizedPath = NormalizeFilePath(path);
+
+        if (IsSameOrInsideFolder(normalizedPath, workingDirStr)) {
+            return false;
+        }
+
+        return IsPathInProtectedPersonalFolders(normalizedPath);
+    }
+
+    bool IsDirectoryCreateOpen(uint32_t& raw) {
+        uint32_t createOptions = raw & 0x00FFFFFF;
+        return (createOptions & 0x00000040) == 0;
+    }
+
+    void PrintAccess(const wchar_t* eventName, const std::wstring& path, uint32_t processId) {
+        std::wcout << std :: endl<<L"[" << eventName << L"] " << counter++ << std :: endl;
+        std::wcout << L"Process Id: " << processId << std :: endl;
+        std::wcout << L"Path: " << NormalizeFilePath(path) << std :: endl;
+    };
+
+    void PrintRename(const std::wstring& oldPath, const std::wstring& newPath, uint32_t processId) {
+        std::wcout << std :: endl << L"[RENAME]" << std :: endl;
+        std::wcout << counter++ << std :: endl;
+        std::wcout << L"Process Id: " << processId << std :: endl;
+
+        if (!oldPath.empty()) {
+            std::wcout << L"Old path: " << NormalizeFilePath(oldPath) << std :: endl;
+        } else {
+            std::wcout << L"Old path: <unknown>" << std :: endl;
+        }
+
+        if (!newPath.empty()) {
+            std::wcout << L"New path: " << NormalizeFilePath(newPath) << std :: endl;
+        } else {
+            std::wcout << L"New path: <unknown>" << std :: endl;
+        }
+    };
+
+    bool TryParsePointer(krabs::parser& parser, const wchar_t* name, uint64_t& out) {
+        try {
+            krabs::pointer ptr;
+            if (parser.try_parse(name, ptr)) {
+                out = ptr.address;
+                return true;
+            }
+        } catch (...) {
+        }
+
+        try {
+            uint64_t value = 0;
+            if (parser.try_parse(name, value)) {
+                out = value;
+                return true;
+            }
+        } catch (...) {
+        }
+
+        try {
+            uint32_t value = 0;
+            if (parser.try_parse(name, value)) {
+                out = value;
+                return true;
+            }
+        } catch (...) {
+        }
+
         return false;
     }
+}
 
-    std::wstring normalizedPath = NormalizeFilePath(path);
-    return _wcsicmp(normalizedPath.c_str(), targetPath.c_str()) == 0;
-};
-
-void PrintAccess(const wchar_t* eventName, const std::wstring& path, uint32_t processId) {
-    std::wcout << L"\n[" << eventName << L"] " << counter++ << '\n';
-    std::wcout << L"Process Id: " << processId << L"\n";
-    std::wcout << L"Path: " << NormalizeFilePath(path) << L"\n";
-};
-
-void PrintRename(const std::wstring& oldPath, const std::wstring& newPath, uint32_t processId) {
-    std::wcout << L"\n[RENAME]\n";
-    std::wcout << counter++ << L"\n";
-    std::wcout << L"Process Id: " << processId << L"\n";
-
-    if (!oldPath.empty()) {
-        std::wcout << L"Old path: " << NormalizeFilePath(oldPath) << L"\n";
-    } else {
-        std::wcout << L"Old path: <unknown>\n";
-    }
-
-    if (!newPath.empty()) {
-        std::wcout << L"New path: " << NormalizeFilePath(newPath) << L"\n";
-    } else {
-        std::wcout << L"New path: <unknown>\n";
-    }
-};
-
-bool TryParsePointer(krabs::parser& parser, const wchar_t* name, uint64_t& out) {
-    try {
-        krabs::pointer ptr;
-        if (parser.try_parse(name, ptr)) {
-            out = ptr.address;
-            return true;
-        }
-    } catch (...) {
-    }
-
-    try {
-        uint64_t value = 0;
-        if (parser.try_parse(name, value)) {
-            out = value;
-            return true;
-        }
-    } catch (...) {
-    }
-
-    try {
-        uint32_t value = 0;
-        if (parser.try_parse(name, value)) {
-            out = value;
-            return true;
-        }
-    } catch (...) {
-    }
-
-    return false;
+bool IsValidDir(const std::wstring &path){
+    return !IsProtectedOutsideWorkingDir(path);
 }
 
 // 12 = Create/Open
-void CreateOpenHandler(krabs::parser& parser, uint32_t processId){
+bool CreateOpenHandler(krabs::parser& parser, uint32_t processId){
     std::wstring filePath;
     uint64_t fileObject = 0;
     uint32_t raw = 0;
@@ -82,17 +114,23 @@ void CreateOpenHandler(krabs::parser& parser, uint32_t processId){
     parser.try_parse(L"CreateOptions", raw);
     TryParsePointer(parser, L"FileObject", fileObject);
 
+    if (IsDirectoryCreateOpen(raw)) return true;
+
+    std::wstring normalizedPath = NormalizeFilePath(filePath);
     if (fileObject != 0 && !filePath.empty()) {
-        file_object_to_path[fileObject] = NormalizeFilePath(filePath);
+        file_object_to_path[fileObject] = normalizedPath;
     }
 
-    if (IsTargetPath(filePath)) {
-        PrintAccess(L"CREATE/OPEN test.txt", filePath, processId);
+    if (IsProtectedOutsideWorkingDir(normalizedPath)) {
+        // PrintAccess(L"PROTECTED CREATE/OPEN", normalizedPath, processId);
+        return false;
     }
+    
+    return true;
 }
 
 // 27 = RenamePath
-void RenamePathHandler(krabs::parser& parser, uint32_t processId){
+bool RenamePathHandler(krabs::parser& parser, uint32_t processId){
     std::wstring newPath;
     uint64_t fileObject = 0;
 
@@ -106,30 +144,35 @@ void RenamePathHandler(krabs::parser& parser, uint32_t processId){
         oldPath = it->second;
     }
 
-    bool renamedFromTestTxt = IsTargetPath(oldPath);
-    bool renamedToTestTxt = IsTargetPath(newPath);
+    std::wstring normalizedNewPath = NormalizeFilePath(newPath);
+    bool renamedFromProtectedFolder = IsProtectedOutsideWorkingDir(oldPath);
+    bool renamedToProtectedFolder = IsProtectedOutsideWorkingDir(normalizedNewPath);
 
-    if (renamedFromTestTxt || renamedToTestTxt) {
-        PrintRename(oldPath, newPath, processId);
-    }
+    // if (renamedFromProtectedFolder || renamedToProtectedFolder) {
+    //     PrintRename(oldPath, normalizedNewPath, processId);
+    // }
 
-    // Posle rename-a, FileObject sada treba da pokazuje na novu putanju.
     if (fileObject != 0 && !newPath.empty()) {
-        file_object_to_path[fileObject] = NormalizeFilePath(newPath);
+        file_object_to_path[fileObject] = normalizedNewPath;
     }
+
+    return !(renamedFromProtectedFolder || renamedToProtectedFolder);
 }
 // 19 = Rename
-void Rename(krabs::parser& parser, uint32_t processId){
+bool RenameHandler(krabs::parser& parser, uint32_t processId){
     uint64_t fileObject = 0;
     TryParsePointer(parser, L"FileObject", fileObject);
 
     auto it = file_object_to_path.find(fileObject);
+    std::wstring oldPath = L"";
     if (it != file_object_to_path.end()) {
-        const std::wstring& oldPath = it->second;
+        oldPath = it->second;
 
-        if (IsTargetPath(oldPath)) {
-            PrintRename(oldPath, L"", processId);
+        if (IsProtectedOutsideWorkingDir(oldPath)) {
+            // PrintRename(oldPath, L"", processId);
+            return false;
         }
     }
-
+    
+    return true;
 }

@@ -2,143 +2,101 @@
 
 #include "../NormalizePath/NormalizePath.h"
 
-#include <knownfolders.h>
-#include <shlobj.h>
 #include <windows.h>
-
-#include <algorithm>
-#include <cwchar>
-#include <iostream>
-#include <string>
+#include <shlobj.h>
+#include <knownfolders.h>
+#include <filesystem>
 #include <vector>
+#include <string>
+#include <cwctype>
 
-namespace {
-
-std::wstring TrimTrailingSlashes(std::wstring path) {
-    while (path.size() > 3 && (path.back() == L'\\' || path.back() == L'/')) {
-        path.pop_back();
-    }
-
-    return path;
-}
-
-bool IsPathSeparator(wchar_t ch) {
-    return ch == L'\\' || ch == L'/';
-}
-
-std::wstring ExpandEnvironmentPath(const wchar_t* path) {
-    DWORD needed = ExpandEnvironmentStringsW(path, nullptr, 0);
-    if (needed == 0) {
-        return L"";
-    }
-
-    std::vector<wchar_t> buffer(needed);
-    DWORD result = ExpandEnvironmentStringsW(path, buffer.data(), needed);
-    if (result == 0 || result > needed) {
-        return L"";
-    }
-
-    std::wstring expanded(buffer.data());
-    if (expanded.find(L'%') != std::wstring::npos) {
-        return L"";
-    }
-
-    return expanded;
-}
-
-void AddFolderIfPresent(std::vector<std::wstring>& folders, const std::wstring& folder) {
-    if (folder.empty()) {
-        return;
-    }
-
-    std::wstring normalizedFolder = TrimTrailingSlashes(NormalizeFilePath(folder));
-
-    for (const auto& existingFolder : folders) {
-        if (_wcsicmp(existingFolder.c_str(), normalizedFolder.c_str()) == 0) {
-            return;
+namespace{
+    std::wstring ToLowerPath(std::wstring s) {
+        for (wchar_t& ch : s) {
+            ch = static_cast<wchar_t>(std::towlower(ch));
         }
+        return s;
     }
 
-    folders.push_back(normalizedFolder);
+    std::wstring RemoveTrailingSlash(std::wstring path) {
+        while (path.size() > 3 &&
+            (path.back() == L'\\' || path.back() == L'/')) {
+            path.pop_back();
+        }
+        return path;
+    }
+
+    std::wstring GetKnownFolderPath(REFKNOWNFOLDERID folderId) {
+        PWSTR rawPath = nullptr;
+
+        HRESULT hr = SHGetKnownFolderPath(
+            folderId,
+            0,
+            nullptr,
+            &rawPath
+        );
+
+        if (FAILED(hr) || rawPath == nullptr) {
+            return L"";
+        }
+
+        std::wstring result(rawPath);
+        CoTaskMemFree(rawPath);
+
+        return NormalizeFilePath(result);
+    }
 }
 
-}
 
-bool IsSameOrInsideFolder(const std::wstring& path, const std::wstring& folder) {
-    if (path.empty() || folder.empty()) {
+bool IsSameOrInsideFolder(
+    const std::wstring& normalizedPath,
+    const std::wstring& normalizedFolder
+) {
+    if (normalizedPath.empty() || normalizedFolder.empty()) {
         return false;
     }
 
-    std::wstring normalizedPath = TrimTrailingSlashes(NormalizeFilePath(path));
-    std::wstring normalizedFolder = TrimTrailingSlashes(NormalizeFilePath(folder));
+    std::wstring path = RemoveTrailingSlash(NormalizeFilePath(normalizedPath));
+    std::wstring dir = RemoveTrailingSlash(NormalizeFilePath(normalizedFolder));
 
-    if (_wcsicmp(normalizedPath.c_str(), normalizedFolder.c_str()) == 0) {
+    path = ToLowerPath(path);
+    dir = ToLowerPath(dir);
+
+    // Isti folder/fajl kao root.
+    if (path == dir) {
         return true;
     }
 
-    if (normalizedPath.size() <= normalizedFolder.size()) {
+    // Mora da bude "dir\nešto", ne samo "dirXYZ".
+    if (path.size() <= dir.size()) {
         return false;
     }
 
-    if (_wcsnicmp(
-            normalizedPath.c_str(),
-            normalizedFolder.c_str(),
-            normalizedFolder.size()) != 0) {
+    if (path.compare(0, dir.size(), dir) != 0) {
         return false;
     }
 
-    return IsPathSeparator(normalizedPath[normalizedFolder.size()]);
+    wchar_t nextChar = path[dir.size()];
+    return nextChar == L'\\' || nextChar == L'/';
 }
 
-std::wstring GetKnownFolderPathString(const KNOWNFOLDERID& folderId) {
-    PWSTR rawPath = nullptr;
-
-    HRESULT hr = SHGetKnownFolderPath(
-        folderId,
-        0,
-        nullptr,
-        &rawPath);
-
-    if (FAILED(hr) || rawPath == nullptr) {
-        return L"";
-    }
-
-    std::wstring result(rawPath);
-    CoTaskMemFree(rawPath);
-
-    return result;
-}
-
-std::vector<std::wstring> GetProtectedPersonalFolders() {
-    std::vector<std::wstring> folders;
-
-    std::vector<KNOWNFOLDERID> knownFolders = {
-        FOLDERID_Desktop,
-        FOLDERID_Documents,
-        FOLDERID_Pictures,
-        FOLDERID_Videos
+bool IsPathInProtectedPersonalFolders(const std::wstring& normalizedPath) {
+    static std::vector<std::wstring> protectedFolders = {
+        GetKnownFolderPath(FOLDERID_Desktop),
+        GetKnownFolderPath(FOLDERID_Documents),
+        GetKnownFolderPath(FOLDERID_Pictures),
+        GetKnownFolderPath(FOLDERID_Videos)
     };
 
-    for (const auto& folderId : knownFolders) {
-        AddFolderIfPresent(folders, GetKnownFolderPathString(folderId));
-    }
-
-    AddFolderIfPresent(folders, ExpandEnvironmentPath(L"%USERPROFILE%\\Desktop"));
-    AddFolderIfPresent(folders, ExpandEnvironmentPath(L"%USERPROFILE%\\Documents"));
-    AddFolderIfPresent(folders, ExpandEnvironmentPath(L"%USERPROFILE%\\Pictures"));
-    AddFolderIfPresent(folders, ExpandEnvironmentPath(L"%USERPROFILE%\\Videos"));
-
-    return folders;
-}
-
-bool IsPathAllowed(const std::wstring& normalizedPath) {
-    std::vector<std::wstring> forbiddenFolders = GetProtectedPersonalFolders();
-
-    for (const auto& forbiddenPath : forbiddenFolders) {
-        if (IsSameOrInsideFolder(normalizedPath, forbiddenPath)) {
-            return false;
+    for (const std::wstring& folder : protectedFolders) {
+        if (IsSameOrInsideFolder(normalizedPath, folder)) {
+            return true;
         }
     }
 
-    return true;
+    return false;
+}
+
+bool IsPathAllowed(const std::wstring& normalizedPath) {
+    return !IsPathInProtectedPersonalFolders(normalizedPath);
 }

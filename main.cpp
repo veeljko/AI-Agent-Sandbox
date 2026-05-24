@@ -1,6 +1,7 @@
 #include "StartProcess/StartProcess.h"
 #include "ProviderEventsHandlers/ProviderEventsHandlers.h"
 #include "krabs/krabs.hpp"
+
 #include <iostream>
 #include <thread>
 #include <exception>
@@ -38,11 +39,13 @@ int main() {
     krabs::user_trace trace(trace_name);
     krabs::provider<> kernelFileProvider(L"Microsoft-Windows-Kernel-File");
     kernelFileProvider.any(
+        0x20  | // File I/O
         0x80  | // Create/Open
         0x400 | // DeletePath
         0x800 | // RenamePath / SetLinkPath
         0x1000  // CreateNewFile
     );
+    
     auto eventManager = [&managedProcess](
         const EVENT_RECORD& record,
         const krabs::trace_context& trace_context
@@ -56,9 +59,12 @@ int main() {
             }
 
             uint32_t processId = (record.EventHeader.ProcessId);
-            if (schema.event_id() == 12) CreateOpenHandler(parser, processId);
-            if (schema.event_id() == 27) RenamePathHandler(parser, processId);
-            if (schema.event_id() == 19) Rename(parser, processId);
+            bool isValid = true;
+            if (schema.event_id() == 12) isValid = CreateOpenHandler(parser, processId);
+            else if (schema.event_id() == 27) isValid = RenamePathHandler(parser, processId);
+            else if (schema.event_id() == 19) isValid = RenameHandler(parser, processId);
+
+            if (!isValid) std :: wcout << "[ALERT] Proces pristupa folderu van radnog direktorijuma!" << std :: endl;
 
         } catch (const std::exception& ex) {
             std::cerr << "Callback error: " << ex.what() << std::endl;

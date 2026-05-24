@@ -15,7 +15,7 @@ struct ManagedJobProcess {
     DWORD processId = 0;
     DWORD threadId = 0;
 };
-
+extern const wchar_t workingDir[];
 bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess);
 bool ResumeManagedProcess(ManagedJobProcess& managedProcess);
 bool WaitForManagedJobToFinish(ManagedJobProcess& managedProcess);

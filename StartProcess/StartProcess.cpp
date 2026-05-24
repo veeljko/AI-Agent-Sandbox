@@ -6,6 +6,8 @@
 #include <unordered_set>
 #include <vector>
 
+const wchar_t workingDir[] = L"C:\\Users\\Korisnik\\Desktop\\test";
+
 namespace {
     std::mutex g_knownJobPidsMutex;
     std::unordered_set<DWORD> g_knownJobPids;
@@ -64,8 +66,8 @@ bool MonitorJob(ManagedJobProcess& managedProcess) {
 
         if (message == JOB_OBJECT_MSG_NEW_PROCESS) {
             RememberJobPid(messageProcessId);
-            std::wcout << L"[JOB] New process: " << messageProcessId << L"\n";
-            PrintProcessesInJob(managedProcess.job);
+            // std::wcout << L"[JOB] New process: " << messageProcessId << L"\n";
+            // PrintProcessesInJob(managedProcess.job);
             continue;
         }
 
@@ -73,8 +75,8 @@ bool MonitorJob(ManagedJobProcess& managedProcess) {
             message == JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS) {
             // Nemoj brisati PID iz g_knownJobPids.
             // ETW eventovi za kratkotrajne procese mogu da stignu tek nakon exit-a.
-            std::wcout << L"[JOB] Process exited: " << messageProcessId << L"\n";
-            PrintProcessesInJob(managedProcess.job);
+            // std::wcout << L"[JOB] Process exited: " << messageProcessId << L"\n";
+            // PrintProcessesInJob(managedProcess.job);
             continue;
         }
 
@@ -160,7 +162,6 @@ bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess) {
     si.cb = sizeof(si);
 
     wchar_t cmdLine[] = L"C:\\Windows\\System32\\cmd.exe";
-    wchar_t workingDir[] = L"C:\\Users\\Korisnik\\Desktop\\test";
     if (!CreateProcessW(
             nullptr,
             cmdLine,
