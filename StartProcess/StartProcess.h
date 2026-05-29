@@ -22,4 +22,5 @@ bool WaitForManagedJobToFinish(ManagedJobProcess& managedProcess);
 bool IsProcessInJob(HANDLE job, DWORD processId);
 std::vector<DWORD> GetProcessIdsInJob(HANDLE job);
 void PrintProcessesInJob(HANDLE job);
+void TerminateManagedJob(ManagedJobProcess& managedProcess, UINT exitCode);
 void CloseManagedJobProcess(ManagedJobProcess& managedProcess);

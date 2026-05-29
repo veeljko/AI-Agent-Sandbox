@@ -6,7 +6,7 @@
 #include <unordered_set>
 #include <vector>
 
-const wchar_t workingDir[] = L"C:\\Users\\Korisnik\\Desktop\\test";
+const wchar_t workingDir[] = L"C:\\Users\\Korisnik\\OneDrive\\Desktop\\test";
 
 namespace {
     std::mutex g_knownJobPidsMutex;
@@ -160,6 +160,10 @@ bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess) {
     STARTUPINFOW si = {};
     PROCESS_INFORMATION pi = {};
     si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
 
     wchar_t cmdLine[] = L"C:\\Windows\\System32\\cmd.exe";
     if (!CreateProcessW(
@@ -167,8 +171,8 @@ bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess) {
             cmdLine,
             nullptr,
             nullptr,
-            FALSE,
-            CREATE_NEW_CONSOLE | CREATE_SUSPENDED,
+            TRUE,
+            CREATE_SUSPENDED,
             nullptr,
             workingDir,
             &si,
@@ -288,6 +292,17 @@ bool WaitForManagedJobToFinish(ManagedJobProcess& managedProcess) {
     std::wcout << L"JobObject has no running processes\n";
     PrintProcessesInJob(managedProcess.job);
     return true;
+}
+
+void TerminateManagedJob(ManagedJobProcess& managedProcess, UINT exitCode) {
+    if (managedProcess.job != nullptr) {
+        TerminateJobObject(managedProcess.job, exitCode);
+        return;
+    }
+
+    if (managedProcess.process != nullptr) {
+        TerminateProcess(managedProcess.process, exitCode);
+    }
 }
 
 void CloseManagedJobProcess(ManagedJobProcess& managedProcess) {

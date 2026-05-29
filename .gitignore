@@ -6,6 +6,8 @@
 *.idb
 *.iobj
 *.ipdb
+*.ps1
+*.exe~
 
 # Visual Studio generated directories
 .vs/
