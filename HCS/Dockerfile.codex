@@ -1,0 +1,57 @@
+# escape=`
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+
+SHELL ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]
+
+ARG NODE_VERSION=22.17.0
+ARG GIT_VERSION=2.50.1
+ARG GIT_RELEASE=2.50.1.windows.1
+ARG CODEX_VERSION=0.145.0
+
+ENV NODE_HOME="C:\tools\node" `
+    NPM_CONFIG_PREFIX="C:\tools\npm" `
+    NPM_CONFIG_CACHE="C:\tools\npm-cache" `
+    CODEX_HOME="C:\codex-home"
+
+RUN $ErrorActionPreference = 'Stop'; `
+    New-Item -ItemType Directory -Force C:\downloads, C:\tools\node, C:\tools\npm | Out-Null; `
+    $archive = 'node-v{0}-win-x64.zip' -f $env:NODE_VERSION; `
+    $archivePath = Join-Path C:\downloads $archive; `
+    $nodeBaseUri = 'https://nodejs.org/dist/v{0}' -f $env:NODE_VERSION; `
+    Invoke-WebRequest -UseBasicParsing -Uri ('{0}/{1}' -f $nodeBaseUri, $archive) -OutFile $archivePath; `
+    Invoke-WebRequest -UseBasicParsing -Uri ('{0}/SHASUMS256.txt' -f $nodeBaseUri) -OutFile C:\downloads\SHASUMS256.txt; `
+    $line = Get-Content C:\downloads\SHASUMS256.txt | Where-Object { ($_ -split '\s+', 2)[1] -eq $archive }; `
+    if (-not $line) { throw 'Node checksum nije pronadjen' }; `
+    $expected = ($line -split '\s+')[0].ToUpperInvariant(); `
+    $actual = (Get-FileHash -Algorithm SHA256 $archivePath).Hash; `
+    if ($actual -ne $expected) { throw 'Node SHA256 mismatch' }; `
+    Expand-Archive $archivePath C:\downloads\node; `
+    $expandedNode = Join-Path C:\downloads\node ('node-v{0}-win-x64' -f $env:NODE_VERSION); `
+    Copy-Item (Join-Path $expandedNode '*') C:\tools\node -Recurse -Force
+
+ENV PATH="C:\tools\node;C:\tools\npm;C:\Program Files\Git\cmd;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Windows\System32;C:\Windows"
+
+RUN $ErrorActionPreference = 'Stop'; `
+    $installer = 'C:\downloads\Git-{0}-64-bit.exe' -f $env:GIT_VERSION; `
+    $uri = 'https://github.com/git-for-windows/git/releases/download/v{0}/Git-{1}-64-bit.exe' -f $env:GIT_RELEASE, $env:GIT_VERSION; `
+    Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $installer; `
+    $signature = Get-AuthenticodeSignature $installer; `
+    if ($signature.Status -ne 'Valid') { throw ('Git Authenticode status: {0}' -f $signature.Status) }; `
+    $process = Start-Process $installer -ArgumentList '/VERYSILENT','/NORESTART','/NOCANCEL','/SP-' -Wait -PassThru; `
+    if ($process.ExitCode -ne 0) { throw ('Git installer exit code {0}' -f $process.ExitCode) }
+
+RUN $ErrorActionPreference = 'Stop'; `
+    New-Item -ItemType Directory -Force C:\codex-home | Out-Null; `
+    & C:\tools\node\npm.cmd install --global ('@openai/codex@{0}' -f $env:CODEX_VERSION); `
+    & C:\tools\npm\codex.cmd --version; `
+    if ($LASTEXITCODE -ne 0) { throw 'Codex CLI verifikacija nije uspela' }
+
+RUN $ErrorActionPreference = 'Stop'; `
+    New-Item -ItemType Directory -Force C:\workspace, C:\codex-home | Out-Null; `
+    & icacls.exe C:\workspace /grant '*S-1-5-32-545:(OI)(CI)M' /T /C | Out-Null; `
+    & icacls.exe C:\codex-home /grant '*S-1-5-32-545:(OI)(CI)M' /T /C | Out-Null; `
+    Remove-Item C:\downloads, C:\tools\npm-cache -Recurse -Force -ErrorAction SilentlyContinue
+
+USER ContainerUser
+WORKDIR C:\workspace
+ENTRYPOINT ["C:\\tools\\node\\node.exe", "C:\\tools\\npm\\node_modules\\@openai\\codex\\bin\\codex.js"]

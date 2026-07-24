@@ -1,12 +1,16 @@
 #include "StartProcess.h"
 
+#include <algorithm>
+#include <cwchar>
 #include <exception>
 #include <iostream>
 #include <mutex>
+#include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
-const wchar_t workingDir[] = L"C:\\Users\\Korisnik\\OneDrive\\Desktop\\test";
+const wchar_t workingDir[] = L"C:\\Users\\Korisnik\\Desktop\\test";
 
 namespace {
     std::mutex g_knownJobPidsMutex;
@@ -37,6 +41,57 @@ namespace {
     bool IsKnownJobPid(DWORD processId) {
         std::lock_guard<std::mutex> lock(g_knownJobPidsMutex);
         return g_knownJobPids.find(processId) != g_knownJobPids.end();
+    }
+
+    std::vector<wchar_t> BuildChildEnvironment(
+        const std::wstring& codexHome
+    ) {
+        std::vector<std::wstring> entries;
+        wchar_t* environment = GetEnvironmentStringsW();
+        if (environment == nullptr) {
+            return {};
+        }
+
+        const std::wstring codexHomePrefix = L"CODEX_HOME=";
+        for (const wchar_t* current = environment;
+             *current != L'\0';
+             current += wcslen(current) + 1) {
+            std::wstring entry(current);
+            bool isCodexHome =
+                entry.size() >= codexHomePrefix.size() &&
+                _wcsnicmp(
+                    entry.c_str(),
+                    codexHomePrefix.c_str(),
+                    codexHomePrefix.size()
+                ) == 0;
+            if (!isCodexHome) {
+                entries.push_back(std::move(entry));
+            }
+        }
+        FreeEnvironmentStringsW(environment);
+
+        entries.push_back(codexHomePrefix + codexHome);
+        std::sort(
+            entries.begin(),
+            entries.end(),
+            [](const std::wstring& left, const std::wstring& right) {
+                return _wcsicmp(left.c_str(), right.c_str()) < 0;
+            }
+        );
+
+        size_t required = 1;
+        for (const std::wstring& entry : entries) {
+            required += entry.size() + 1;
+        }
+
+        std::vector<wchar_t> block;
+        block.reserve(required);
+        for (const std::wstring& entry : entries) {
+            block.insert(block.end(), entry.begin(), entry.end());
+            block.push_back(L'\0');
+        }
+        block.push_back(L'\0');
+        return block;
     }
 }
 
@@ -156,7 +211,10 @@ void PrintProcessesInJob(HANDLE job) {
     }
 }
 
-bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess) {
+bool StartCmdSuspendedInJob(
+    ManagedJobProcess& managedProcess,
+    const std::wstring& codexHome
+) {
     STARTUPINFOW si = {};
     PROCESS_INFORMATION pi = {};
     si.cb = sizeof(si);
@@ -165,6 +223,13 @@ bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess) {
     si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
     si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
 
+    std::vector<wchar_t> environment = BuildChildEnvironment(codexHome);
+    if (environment.empty()) {
+        std::cerr << "GetEnvironmentStringsW failed. GetLastError = "
+                  << GetLastError() << '\n';
+        return false;
+    }
+
     wchar_t cmdLine[] = L"C:\\Windows\\System32\\cmd.exe";
     if (!CreateProcessW(
             nullptr,
@@ -172,8 +237,8 @@ bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess) {
             nullptr,
             nullptr,
             TRUE,
-            CREATE_SUSPENDED,
-            nullptr,
+            CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
+            environment.data(),
             workingDir,
             &si,
             &pi)) {

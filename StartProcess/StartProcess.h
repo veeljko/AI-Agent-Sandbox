@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -16,7 +17,9 @@ struct ManagedJobProcess {
     DWORD threadId = 0;
 };
 extern const wchar_t workingDir[];
-bool StartCmdSuspendedInJob(ManagedJobProcess& managedProcess);
+bool StartCmdSuspendedInJob(
+    ManagedJobProcess& managedProcess,
+    const std::wstring& codexHome);
 bool ResumeManagedProcess(ManagedJobProcess& managedProcess);
 bool WaitForManagedJobToFinish(ManagedJobProcess& managedProcess);
 bool IsProcessInJob(HANDLE job, DWORD processId);

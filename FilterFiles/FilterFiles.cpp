@@ -5,10 +5,10 @@
 #include <windows.h>
 #include <shlobj.h>
 #include <knownfolders.h>
-#include <filesystem>
 #include <vector>
 #include <string>
 #include <cwctype>
+#include <utility>
 
 namespace{
     std::wstring ToLowerPath(std::wstring s) {
@@ -44,6 +44,61 @@ namespace{
         CoTaskMemFree(rawPath);
 
         return NormalizeFilePath(result);
+    }
+
+    std::wstring GetEnvironmentPath(const wchar_t* name) {
+        DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
+        if (required == 0) {
+            return L"";
+        }
+
+        std::vector<wchar_t> buffer(required);
+        DWORD written = GetEnvironmentVariableW(
+            name,
+            buffer.data(),
+            static_cast<DWORD>(buffer.size())
+        );
+        if (written == 0 || written >= buffer.size()) {
+            return L"";
+        }
+        return NormalizeFilePath(std::wstring(buffer.data(), written));
+    }
+
+    void AddUniqueFolder(
+        std::vector<std::wstring>& folders,
+        const std::wstring& folder
+    ) {
+        if (folder.empty()) {
+            return;
+        }
+
+        std::wstring normalizedFolder =
+            RemoveTrailingSlash(NormalizeFilePath(folder));
+        for (const std::wstring& existing : folders) {
+            if (_wcsicmp(existing.c_str(), normalizedFolder.c_str()) == 0) {
+                return;
+            }
+        }
+        folders.push_back(std::move(normalizedFolder));
+    }
+
+    std::vector<std::wstring> BuildProtectedPersonalFolders() {
+        std::vector<std::wstring> folders;
+        AddUniqueFolder(folders, GetKnownFolderPath(FOLDERID_Desktop));
+        AddUniqueFolder(folders, GetKnownFolderPath(FOLDERID_Documents));
+        AddUniqueFolder(folders, GetKnownFolderPath(FOLDERID_Pictures));
+        AddUniqueFolder(folders, GetKnownFolderPath(FOLDERID_Videos));
+        AddUniqueFolder(folders, GetKnownFolderPath(FOLDERID_Music));
+
+        const std::wstring userProfile = GetEnvironmentPath(L"USERPROFILE");
+        if (!userProfile.empty()) {
+            AddUniqueFolder(folders, userProfile + L"\\Desktop");
+            AddUniqueFolder(folders, userProfile + L"\\Documents");
+            AddUniqueFolder(folders, userProfile + L"\\Pictures");
+            AddUniqueFolder(folders, userProfile + L"\\Videos");
+            AddUniqueFolder(folders, userProfile + L"\\Music");
+        }
+        return folders;
     }
 }
 
@@ -81,12 +136,8 @@ bool IsSameOrInsideFolder(
 }
 
 bool IsPathInProtectedPersonalFolders(const std::wstring& normalizedPath) {
-    static std::vector<std::wstring> protectedFolders = {
-        GetKnownFolderPath(FOLDERID_Desktop),
-        GetKnownFolderPath(FOLDERID_Documents),
-        GetKnownFolderPath(FOLDERID_Pictures),
-        GetKnownFolderPath(FOLDERID_Videos)
-    };
+    static const std::vector<std::wstring> protectedFolders =
+        BuildProtectedPersonalFolders();
 
     for (const std::wstring& folder : protectedFolders) {
         if (IsSameOrInsideFolder(normalizedPath, folder)) {

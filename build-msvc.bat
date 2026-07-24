@@ -61,7 +61,28 @@ if errorlevel 1 exit /b %errorlevel%
 link /nologo "%MAIN_OBJ%" "%START_PROCESS_OBJ%" "%NORMALIZE_PATH_OBJ%" "%FILTER_FILES_OBJ%" "%PROVIDER_EVENTS_HANDLERS_OBJ%" ^
   /OUT:"%PROJECT_OUTPUT_EXE%" ^
   tdh.lib advapi32.lib ole32.lib shell32.lib
+if errorlevel 1 exit /b %errorlevel%
 
+where go >nul 2>nul
+if errorlevel 1 (
+  echo Go nije pronadjen u PATH-u; novi HCS sandbox runner nije buildovan.
+  exit /b 1
+)
+
+pushd "HCS"
+if errorlevel 1 exit /b %errorlevel%
+
+go build -buildvcs=false -o "workspace-delete.exe" ".\cmd\workspace-delete"
+if errorlevel 1 (
+  set "BUILD_RESULT=%errorlevel%"
+  popd
+  popd
+  exit /b %BUILD_RESULT%
+)
+
+go build -buildvcs=false -o "sandbox-runner.exe" ".\cmd\sandbox-runner"
 set "BUILD_RESULT=%errorlevel%"
+
+popd
 popd
 exit /b %BUILD_RESULT%

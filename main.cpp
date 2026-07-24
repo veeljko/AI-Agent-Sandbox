@@ -8,6 +8,7 @@
 #include <chrono>
 #include <atomic>
 #include <string>
+#include <utility>
 #include <vector>
 
 
@@ -80,6 +81,67 @@ bool PathExists(const std::wstring& path) {
     return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
+bool DirectoryExists(const std::wstring& path) {
+    DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+           (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+bool EnsureDirectoryExists(const std::wstring& path) {
+    if (DirectoryExists(path)) {
+        return true;
+    }
+    if (CreateDirectoryW(path.c_str(), nullptr)) {
+        return true;
+    }
+    DWORD error = GetLastError();
+    return error == ERROR_ALREADY_EXISTS && DirectoryExists(path);
+}
+
+bool InstallHcsCodexSupportFiles(
+    const std::wstring& exeDir,
+    const std::wstring& codexHomeHost
+) {
+    const std::wstring toolsDirectory = codexHomeHost + L"\\hcs-tools";
+    const std::wstring rulesDirectory = codexHomeHost + L"\\rules";
+    if (!EnsureDirectoryExists(toolsDirectory) ||
+        !EnsureDirectoryExists(rulesDirectory)) {
+        std::wcerr << L"Ne mogu da kreiram HCS Codex support direktorijume. "
+                   << L"GetLastError = " << GetLastError() << std::endl;
+        return false;
+    }
+
+    const std::vector<std::pair<std::wstring, std::wstring>> files = {
+        {
+            exeDir + L"\\HCS\\workspace-delete.exe",
+            toolsDirectory + L"\\workspace-delete.exe"
+        },
+        {
+            exeDir + L"\\HCS\\rules\\hcs-workspace.rules",
+            rulesDirectory + L"\\hcs-workspace.rules"
+        },
+        {
+            exeDir + L"\\HCS\\hcs-workspace.config.toml",
+            codexHomeHost + L"\\hcs-workspace.config.toml"
+        }
+    };
+
+    for (const auto& file : files) {
+        if (!PathExists(file.first)) {
+            std::wcerr << L"Nedostaje HCS Codex support fajl: "
+                       << file.first << std::endl;
+            return false;
+        }
+        if (!CopyFileW(file.first.c_str(), file.second.c_str(), FALSE)) {
+            std::wcerr << L"Ne mogu da instaliram HCS Codex support fajl "
+                       << file.second << L". GetLastError = "
+                       << GetLastError() << std::endl;
+            return false;
+        }
+    }
+    return true;
+}
+
 std::wstring QuoteArgument(const std::wstring& value) {
     if (value.empty()) {
         return L"\"\"";
@@ -100,58 +162,173 @@ std::wstring QuoteArgument(const std::wstring& value) {
     return quoted;
 }
 
-int StartHcsSandboxReexecution(const std::wstring& allowedWorkingDir) {
-    const wchar_t* defaultLayerPath =
-        LR"(C:\ProgramData\Docker\windowsfilter\82dfc8b8aee8ab12f3af86fb21fffbc2e1395888b52ac4d069c4b1bca7cf39bc)";
+std::wstring ResolveCodexHomeHost() {
+    std::wstring codexHome = GetEnvironmentValue(L"HCS_CODEX_HOME_HOST");
+    if (codexHome.empty()) {
+        codexHome = GetEnvironmentValue(L"CODEX_HOME");
+    }
+    if (codexHome.empty()) {
+        std::wstring userProfile = GetEnvironmentValue(L"USERPROFILE");
+        if (!userProfile.empty()) {
+            codexHome = userProfile + L"\\.codex-hcs";
+        }
+    }
+    return codexHome;
+}
 
+bool IsHexCharacter(wchar_t value) {
+    return (value >= L'0' && value <= L'9') ||
+           (value >= L'a' && value <= L'f') ||
+           (value >= L'A' && value <= L'F');
+}
+
+std::wstring ExtractSessionId(const std::wstring& fileName) {
+    const std::wstring prefix = L"rollout-";
+    const std::wstring suffix = L".jsonl";
+    constexpr size_t uuidLength = 36;
+
+    if (fileName.size() < prefix.size() + uuidLength + suffix.size() ||
+        fileName.compare(0, prefix.size(), prefix) != 0 ||
+        fileName.compare(fileName.size() - suffix.size(), suffix.size(), suffix) != 0) {
+        return L"";
+    }
+
+    size_t uuidStart = fileName.size() - suffix.size() - uuidLength;
+    std::wstring sessionId = fileName.substr(uuidStart, uuidLength);
+    for (size_t index = 0; index < sessionId.size(); ++index) {
+        bool isHyphen =
+            index == 8 || index == 13 || index == 18 || index == 23;
+        if ((isHyphen && sessionId[index] != L'-') ||
+            (!isHyphen && !IsHexCharacter(sessionId[index]))) {
+            return L"";
+        }
+    }
+    return sessionId;
+}
+
+struct SessionCandidate {
+    FILETIME lastWriteTime = {};
+    std::wstring id;
+};
+
+void FindNewestSession(
+    const std::wstring& directory,
+    const FILETIME& notBefore,
+    SessionCandidate& candidate
+) {
+    std::wstring searchPath = directory;
+    if (!searchPath.empty() &&
+        searchPath.back() != L'\\' &&
+        searchPath.back() != L'/') {
+        searchPath += L'\\';
+    }
+    searchPath += L'*';
+
+    WIN32_FIND_DATAW findData = {};
+    HANDLE search = FindFirstFileW(searchPath.c_str(), &findData);
+    if (search == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    do {
+        std::wstring name = findData.cFileName;
+        if (name == L"." || name == L"..") {
+            continue;
+        }
+
+        std::wstring fullPath = directory;
+        if (!fullPath.empty() &&
+            fullPath.back() != L'\\' &&
+            fullPath.back() != L'/') {
+            fullPath += L'\\';
+        }
+        fullPath += name;
+
+        if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            if ((findData.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
+                FindNewestSession(fullPath, notBefore, candidate);
+            }
+            continue;
+        }
+
+        std::wstring sessionId = ExtractSessionId(name);
+        if (sessionId.empty() ||
+            CompareFileTime(&findData.ftLastWriteTime, &notBefore) < 0) {
+            continue;
+        }
+
+        if (candidate.id.empty() ||
+            CompareFileTime(
+                &findData.ftLastWriteTime,
+                &candidate.lastWriteTime
+            ) > 0) {
+            candidate.lastWriteTime = findData.ftLastWriteTime;
+            candidate.id = std::move(sessionId);
+        }
+    } while (FindNextFileW(search, &findData));
+
+    FindClose(search);
+}
+
+std::wstring FindInterruptedSessionId(
+    const std::wstring& codexHome,
+    const FILETIME& sessionStartedAfter
+) {
+    SessionCandidate candidate;
+    FindNewestSession(
+        codexHome + L"\\sessions",
+        sessionStartedAfter,
+        candidate
+    );
+    return candidate.id;
+}
+
+int StartHcsSandboxReexecution(
+    const std::wstring& allowedWorkingDir,
+    const std::wstring& codexHomeHost,
+    const std::wstring& sessionId
+) {
     std::wstring exeDir = GetExecutableDirectory();
     std::wstring runnerPath = GetEnvironmentValue(L"HCS_SANDBOX_RUNNER");
     if (runnerPath.empty()) {
-        runnerPath = exeDir + L"\\hcs_sandbox_runner.exe";
-    }
-
-    std::wstring layerPath = GetEnvironmentValue(L"HCS_LAYER_PATH");
-    if (layerPath.empty()) {
-        layerPath = defaultLayerPath;
-    }
-
-    std::wstring codexHomeHost = GetEnvironmentValue(L"HCS_CODEX_HOME_HOST");
-    if (codexHomeHost.empty()) {
-        std::wstring hcsCodexHome = L"C:\\Users\\Korisnik\\.codex-hcs";
-        codexHomeHost = PathExists(hcsCodexHome) ? hcsCodexHome : L"C:\\Users\\Korisnik\\.codex";
+        runnerPath = exeDir + L"\\HCS\\sandbox-runner.exe";
     }
 
     if (!PathExists(runnerPath)) {
-        std::wcerr << L"HCS sandbox runner nije pronadjen: " << runnerPath << std::endl;
-        std::wcerr << L"Build: go build -o ..\\Project3\\hcs_sandbox_runner.exe . iz Go Hello World foldera." << std::endl;
+        std::wcerr << L"Novi HCS sandbox runner nije pronadjen: " << runnerPath << std::endl;
+        std::wcerr << L"Build: cd HCS && go build -buildvcs=false -o sandbox-runner.exe .\\cmd\\sandbox-runner" << std::endl;
         return 1;
     }
 
-    if (!PathExists(layerPath)) {
-        std::wcerr << L"HCS layer path nije pronadjen: " << layerPath << std::endl;
-        std::wcerr << L"Postavi HCS_LAYER_PATH na top windowsfilter layer folder." << std::endl;
-        return 1;
-    }
-
-    if (!PathExists(codexHomeHost)) {
+    if (!DirectoryExists(codexHomeHost)) {
         std::wcerr << L"Codex home za HCS nije pronadjen: " << codexHomeHost << std::endl;
-        std::wcerr << L"Postavi HCS_CODEX_HOME_HOST na folder koji sadrzi Codex auth/config." << std::endl;
+        std::wcerr << L"Postavi HCS_CODEX_HOME_HOST na pripremljen folder koji sadrzi Codex auth/config/session stanje." << std::endl;
+        return 1;
+    }
+    if (!InstallHcsCodexSupportFiles(exeDir, codexHomeHost)) {
         return 1;
     }
 
+    const std::wstring workspaceContainer = L"C:\\WorkingDirectory";
+    const std::wstring resumeCommand =
+        L"codex.cmd resume --dangerously-bypass-approvals-and-sandbox"
+        L" -p hcs-workspace"
+        L" --cd " + QuoteArgument(workspaceContainer) + L" " + sessionId;
     std::wstring commandLine =
         QuoteArgument(runnerPath) +
-        L" -layer " + QuoteArgument(layerPath) +
-        L" -workdir " + QuoteArgument(allowedWorkingDir) +
-        L" -mount-ro \"C:\\Program Files\\nodejs=C:\\tools\\nodejs\"" +
-        L" -mount-ro \"C:\\Users\\Korisnik\\AppData\\Roaming\\npm=C:\\tools\\npm\"" +
-        L" -mount " + QuoteArgument(codexHomeHost + L"=C:\\profile\\.codex") +
-        L" -env \"USERPROFILE=C:\\profile\"" +
-        L" -env \"HOME=C:\\profile\"" +
-        L" -env \"CODEX_HOME=C:\\profile\\.codex\"" +
-        L" -env \"PATH=C:\\tools\\nodejs;C:\\tools\\npm;C:\\Windows\\System32;C:\\Windows\"";
+        L" -workspace " + QuoteArgument(allowedWorkingDir) +
+        L" -workspace-container " + QuoteArgument(workspaceContainer) +
+        L" -workdir " + QuoteArgument(workspaceContainer) +
+        L" -codex-home " + QuoteArgument(codexHomeHost) +
+        L" -codex-home-container " + QuoteArgument(codexHomeHost) +
+        L" -tty" +
+        L" -command-line " + QuoteArgument(resumeCommand);
 
-    std::wcout << L"Restartujem proces u HCS sandbox-u..." << std::endl;
+    std::wcout << L"Nastavljam prekinutu Codex sesiju u novom HCS sandbox-u..." << std::endl;
+    std::wcout << L"Session ID: " << sessionId << std::endl;
+    std::wcout << L"Host mountovi: " << allowedWorkingDir
+               << L" -> " << workspaceContainer << L", " << codexHomeHost
+               << L" -> " << codexHomeHost << std::endl;
     std::wcout << L"Komanda: " << commandLine << std::endl;
 
     STARTUPINFOW si = {};
@@ -200,8 +377,20 @@ int main() {
     StopStaleTraceSession(trace_name);
     std::atomic_bool sandboxReexecutionRequested = false;
 
+    std::wstring codexHomeHost = ResolveCodexHomeHost();
+    if (!DirectoryExists(codexHomeHost)) {
+        std::wcerr << L"Namenski Codex home nije pronadjen: "
+                   << codexHomeHost << std::endl;
+        std::wcerr << L"Kreiraj ga pomocu HCS\\scripts\\Initialize-CodexDirectories.ps1 "
+                   << L"ili postavi HCS_CODEX_HOME_HOST." << std::endl;
+        return 1;
+    }
+
+    FILETIME sessionStartedAfter = {};
+    GetSystemTimeAsFileTime(&sessionStartedAfter);
+
     ManagedJobProcess managedProcess = {};
-    if (!StartCmdSuspendedInJob(managedProcess)) {
+    if (!StartCmdSuspendedInJob(managedProcess, codexHomeHost)) {
         return 1;
     }
 
@@ -209,6 +398,7 @@ int main() {
     krabs::provider<> kernelFileProvider(L"Microsoft-Windows-Kernel-File");
     kernelFileProvider.any(
         0x20  | // File I/O
+        0x40  | // OperationEnd (correlates Create/Open status)
         0x80  | // Create/Open
         0x400 | // DeletePath
         0x800 | // RenamePath / SetLinkPath
@@ -223,15 +413,27 @@ int main() {
             krabs::schema schema(record, trace_context.schema_locator);
             krabs::parser parser(schema);
 
-            if (!IsProcessInJob(managedProcess.job, record.EventHeader.ProcessId)) {
-                return;
-            }
-
             uint32_t processId = (record.EventHeader.ProcessId);
             bool isValid = true;
-            if (schema.event_id() == 12) isValid = CreateOpenHandler(parser, processId);
-            else if (schema.event_id() == 27) isValid = RenamePathHandler(parser, processId);
-            else if (schema.event_id() == 19) isValid = RenameHandler(parser, processId);
+            if (schema.event_id() == 24) {
+                // OperationEnd can be delivered with a provider/system PID.
+                // The handler only accepts IRPs previously captured from this job.
+                isValid = OperationEndHandler(parser);
+            } else {
+                if (!IsProcessInJob(managedProcess.job, processId)) {
+                    return;
+                }
+
+                if (schema.event_id() == 12) {
+                    isValid = CreateOpenHandler(parser, processId);
+                } else if (schema.event_id() == 30) {
+                    isValid = CreateNewFileHandler(parser, processId);
+                } else if (schema.event_id() == 27) {
+                    isValid = RenamePathHandler(parser, processId);
+                } else if (schema.event_id() == 19) {
+                    isValid = RenameHandler(parser, processId);
+                }
+            }
 
             if (!isValid && !sandboxReexecutionRequested.exchange(true)) {
                 std::wcout << L"[ALERT] Proces pristupa folderu van radnog direktorijuma!" << std::endl;
@@ -296,7 +498,20 @@ int main() {
     CloseManagedJobProcess(managedProcess);
 
     if (sandboxReexecutionRequested.load()) {
-        return StartHcsSandboxReexecution(workingDir);
+        std::wstring sessionId = FindInterruptedSessionId(
+            codexHomeHost,
+            sessionStartedAfter
+        );
+        if (sessionId.empty()) {
+            std::wcerr << L"Nije pronadjena Codex sesija pokrenuta u ovom "
+                       << L"kontrolisanom procesu; HCS nije startovan." << std::endl;
+            return 1;
+        }
+        return StartHcsSandboxReexecution(
+            workingDir,
+            codexHomeHost,
+            sessionId
+        );
     }
 
     if (trace_exception) {

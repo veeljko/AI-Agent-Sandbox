@@ -1,4 +1,5 @@
 #include "ProviderEventsHandlers.h"
+#include "FileCreatePolicy.h"
 #include "../NormalizePath/NormalizePath.h"
 #include "../StartProcess/StartProcess.h"
 #include "../FilterFiles/FilterFiles.h"
@@ -10,11 +11,16 @@ static const std::wstring targetPath = NormalizeFilePath(L"C:\\Users\\Korisnik\\
 static const std::wstring workingDirStr = NormalizeFilePath(workingDir);
 
 namespace{
-    constexpr uint32_t kFileDirectoryFile = 0x00000001;
-
     static int counter = 0;
     static std::map<uint64_t, std::wstring> file_object_to_path;
 
+    struct PendingProtectedCreate {
+        std::wstring path;
+        uint64_t fileObject = 0;
+        uint32_t processId = 0;
+    };
+
+    static std::map<uint64_t, PendingProtectedCreate> pending_protected_creates;
 
     bool IsTargetPath(const std::wstring& path){
         if (path.empty()) {
@@ -39,9 +45,10 @@ namespace{
         return IsPathInProtectedPersonalFolders(normalizedPath);
     }
 
-    bool IsDirectoryCreateOpen(uint32_t& raw) {
-        uint32_t createOptions = raw & 0x00FFFFFF;
-        return (createOptions & 0x00000040) == 0;
+    bool IsExistingDirectory(const std::wstring& normalizedPath) {
+        DWORD attributes = GetFileAttributesW(normalizedPath.c_str());
+        return attributes != INVALID_FILE_ATTRIBUTES &&
+               (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
     }
 
     void PrintAccess(const wchar_t* eventName, const std::wstring& path, uint32_t processId) {
@@ -98,6 +105,27 @@ namespace{
 
         return false;
     }
+
+    bool TryParseOperationStatus(krabs::parser& parser, uint32_t& out) {
+        // Microsoft-Windows-Kernel-File/Event 24 names this field "Status"
+        // on current Windows builds. Keep the legacy name as a compatibility
+        // fallback, but never treat a missing field as STATUS_SUCCESS.
+        try {
+            if (parser.try_parse(L"Status", out)) {
+                return true;
+            }
+        } catch (...) {
+        }
+
+        try {
+            if (parser.try_parse(L"NtStatus", out)) {
+                return true;
+            }
+        } catch (...) {
+        }
+
+        return false;
+    }
 }
 
 bool IsValidDir(const std::wstring &path){
@@ -107,26 +135,94 @@ bool IsValidDir(const std::wstring &path){
 // 12 = Create/Open
 bool CreateOpenHandler(krabs::parser& parser, uint32_t processId){
     std::wstring filePath;
+    uint64_t irp = 0;
     uint64_t fileObject = 0;
     uint32_t raw = 0;
 
     parser.try_parse(L"FileName", filePath);
     parser.try_parse(L"CreateOptions", raw);
+    if (!TryParsePointer(parser, L"Irp", irp)) {
+        TryParsePointer(parser, L"IrpPtr", irp);
+    }
     TryParsePointer(parser, L"FileObject", fileObject);
 
-    if (IsDirectoryCreateOpen(raw)) return true;
+    if (IsDirectoryCreateOpenOptions(raw)) return true;
 
     std::wstring normalizedPath = NormalizeFilePath(filePath);
     if (fileObject != 0 && !filePath.empty()) {
         file_object_to_path[fileObject] = normalizedPath;
     }
 
-    if (IsProtectedOutsideWorkingDir(normalizedPath)) {
-        // PrintAccess(L"PROTECTED CREATE/OPEN", normalizedPath, processId);
-        return false;
+    if (IsProtectedOutsideWorkingDir(normalizedPath) && irp != 0) {
+        pending_protected_creates[irp] = {
+            normalizedPath,
+            fileObject,
+            processId
+        };
     }
     
     return true;
+}
+
+// 24 = OperationEnd. Create/Open events are emitted when the I/O starts, even
+// for failed probes. Correlate by IRP and alert only after a successful result.
+bool OperationEndHandler(krabs::parser& parser) {
+    uint64_t irp = 0;
+    uint32_t status = 0;
+    if (!TryParsePointer(parser, L"Irp", irp)) {
+        TryParsePointer(parser, L"IrpPtr", irp);
+    }
+    const bool hasStatus = TryParseOperationStatus(parser, status);
+
+    auto it = pending_protected_creates.find(irp);
+    if (it == pending_protected_creates.end()) {
+        return true;
+    }
+
+    PendingProtectedCreate pending = std::move(it->second);
+    pending_protected_creates.erase(it);
+    if (!IsCompletedFileOperationSuccessful(hasStatus, status)) {
+        return true;
+    }
+    if (IsExistingDirectory(pending.path)) {
+        return true;
+    }
+
+    if (pending.fileObject != 0) {
+        file_object_to_path[pending.fileObject] = pending.path;
+    }
+    PrintAccess(
+        L"PROTECTED CREATE/OPEN",
+        pending.path,
+        pending.processId
+    );
+    return false;
+}
+
+// 30 = CreateNewFile. This event is emitted for an actual new file, so it can
+// be handled directly without treating failed name probes as violations.
+bool CreateNewFileHandler(krabs::parser& parser, uint32_t processId) {
+    std::wstring filePath;
+    uint64_t fileObject = 0;
+    uint32_t rawCreateOptions = 0;
+    parser.try_parse(L"FileName", filePath);
+    parser.try_parse(L"CreateOptions", rawCreateOptions);
+    TryParsePointer(parser, L"FileObject", fileObject);
+
+    std::wstring normalizedPath = NormalizeFilePath(filePath);
+    if (IsDirectoryCreateOpenOptions(rawCreateOptions) ||
+        IsExistingDirectory(normalizedPath)) {
+        return true;
+    }
+    if (fileObject != 0 && !normalizedPath.empty()) {
+        file_object_to_path[fileObject] = normalizedPath;
+    }
+    if (!IsProtectedOutsideWorkingDir(normalizedPath)) {
+        return true;
+    }
+
+    PrintAccess(L"PROTECTED CREATE NEW FILE", normalizedPath, processId);
+    return false;
 }
 
 // 27 = RenamePath

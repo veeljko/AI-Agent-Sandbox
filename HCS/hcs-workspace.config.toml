@@ -1,0 +1,12 @@
+developer_instructions = '''
+This Codex process runs inside an externally isolated HCS Hyper-V container.
+The only project workspace is C:\WorkingDirectory.
+
+When the user explicitly asks to delete a file below C:\WorkingDirectory, use:
+workspace-delete.exe <absolute-file-path>
+
+The helper enforces that the target is an existing regular file below the
+workspace. Do not use Remove-Item, del, or apply_patch for mapped-workspace
+deletions. Never attempt to delete C:\WorkingDirectory itself, a directory, or
+anything outside C:\WorkingDirectory.
+'''
