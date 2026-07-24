@@ -1,0 +1,5 @@
+prefix_rule(
+    pattern = ["workspace-delete.exe"],
+    decision = "allow",
+    justification = "The helper only deletes regular files below C:\\WorkingDirectory.",
+)
