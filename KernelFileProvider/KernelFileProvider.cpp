@@ -51,7 +51,7 @@ KernelFileProvider::KernelFileProvider(
             if (!isValid && !sandboxReexecutionRequested.exchange(true)) {
                 std::wcout << L"[ALERT] Proces pristupa folderu van radnog direktorijuma!" << std::endl;
                 std::wcout << L"Gasim trenutni JobObject i prelazim na HCS sandbox." << std::endl;
-                TerminateManagedJob(managedProcess, 1);
+                //TerminateManagedJob(managedProcess, 1);
             }
 
         } catch (const std::exception& ex) {
