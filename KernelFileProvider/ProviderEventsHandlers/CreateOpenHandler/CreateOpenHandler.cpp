@@ -18,11 +18,17 @@ bool CreateOpenHandler(krabs::parser& parser, uint32_t processId){
     }
     TryParsePointer(parser, L"FileObject", fileObject);
 
-    if (IsDirectoryCreateOpenOptions(raw)) return true;
-
     std::wstring normalizedPath = NormalizeFilePath(filePath);
     if (fileObject != 0 && !filePath.empty()) {
         file_object_to_path[fileObject] = normalizedPath;
+    }
+
+    if (IsDirectoryCreateOpenOptions(raw)) return true;
+
+    // Event 12 reports an attempt, not a successful read. Keep that distinction
+    // visible even for allowed paths, so child-process opens can be diagnosed.
+    if (!normalizedPath.empty()) {
+        PrintAccess(L"CREATE/OPEN REQUEST", normalizedPath, processId);
     }
 
     if (IsProtectedOutsideWorkingDir(normalizedPath) && irp != 0) {

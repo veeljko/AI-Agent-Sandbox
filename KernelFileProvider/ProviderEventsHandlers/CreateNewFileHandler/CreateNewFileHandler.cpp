@@ -14,12 +14,12 @@ bool CreateNewFileHandler(krabs::parser& parser, uint32_t processId) {
     TryParsePointer(parser, L"FileObject", fileObject);
 
     std::wstring normalizedPath = NormalizeFilePath(filePath);
+    if (fileObject != 0 && !normalizedPath.empty()) {
+        file_object_to_path[fileObject] = normalizedPath;
+    }
     if (IsDirectoryCreateOpenOptions(rawCreateOptions) ||
         IsExistingDirectory(normalizedPath)) {
         return true;
-    }
-    if (fileObject != 0 && !normalizedPath.empty()) {
-        file_object_to_path[fileObject] = normalizedPath;
     }
     if (!IsProtectedOutsideWorkingDir(normalizedPath)) {
         return true;

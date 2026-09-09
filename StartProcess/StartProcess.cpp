@@ -121,7 +121,7 @@ bool MonitorJob(ManagedJobProcess& managedProcess) {
 
         if (message == JOB_OBJECT_MSG_NEW_PROCESS) {
             RememberJobPid(messageProcessId);
-            // std::wcout << L"[JOB] New process: " << messageProcessId << L"\n";
+            std::wcout << L"[JOB] New process: " << messageProcessId << L"\n";
             // PrintProcessesInJob(managedProcess.job);
             continue;
         }

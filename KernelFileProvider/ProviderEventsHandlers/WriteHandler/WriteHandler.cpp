@@ -8,12 +8,10 @@ bool WriteHandler(krabs::parser& parser, uint32_t processId) {
     std::lock_guard<std::mutex> lock(FileHandlerCommon::mutex);
     uint64_t fileObject = 0;
     TryParsePointer(parser, L"FileObject", fileObject);
-    std::wstring filePath;
-    auto found = file_object_to_path.find(fileObject);
-    if (found != file_object_to_path.end()) {
-        filePath = found->second;
+    std::wstring filePath = ResolveFilePath(parser);
+    if (!PrintAccess(L"WRITE", filePath, processId)) {
+        return true;
     }
-    PrintAccess(L"WRITE", filePath, processId);
     uint64_t byteOffset = 0;
     uint32_t ioSize = 0;
     if (parser.try_parse(L"ByteOffset", byteOffset)) {

@@ -9,3 +9,5 @@
 #include "WriteHandler/WriteHandler.h"
 #include "DeletePathHandler/DeletePathHandler.h"
 #include "CloseHandler/CloseHandler.h"
+#include "NameCreateHandler/NameCreateHandler.h"
+#include "NameDeleteHandler/NameDeleteHandler.h"

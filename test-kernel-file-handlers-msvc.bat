@@ -10,6 +10,7 @@ if errorlevel 1 exit /b %errorlevel%
 call "%~dp0kernel-file-handler-sources.bat"
 cl /nologo /EHsc /std:c++17 /MP2 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
   /I "%~dp0krabs" /c "tests\KernelFileHandlersTests.cpp" %KERNEL_FILE_HANDLER_SOURCES% ^
+  "KernelFileProvider\KernelFileProvider.cpp" ^
   "NormalizePath\NormalizePath.cpp" "FilterFiles\FilterFiles.cpp" "StartProcess\StartProcess.cpp" ^
   /Fo"%TEST_DIR%/"
 if errorlevel 1 exit /b %errorlevel%

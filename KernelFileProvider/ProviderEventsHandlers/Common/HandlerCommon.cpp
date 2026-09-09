@@ -6,6 +6,7 @@
 namespace FileHandlerCommon {
 std::mutex mutex;
 std::map<uint64_t, std::wstring> file_object_to_path;
+std::map<uint64_t, std::wstring> file_key_to_path;
 std::map<uint64_t, PendingProtectedCreate> pending_protected_creates;
 static int counter = 0;
 static const std::wstring workingDirStr = NormalizeFilePath(workingDir);
@@ -30,27 +31,32 @@ static const std::wstring workingDirStr = NormalizeFilePath(workingDir);
                (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
     }
 
-    void PrintAccess(const wchar_t* eventName, const std::wstring& path, uint32_t processId) {
+    bool PrintAccess(const wchar_t* eventName, const std::wstring& path, uint32_t processId) {
+        if (path.empty() || IsSameOrInsideFolder(path, L"C:\\Windows")) {
+            return false;
+        }
         std::wcout << std :: endl<<L"[" << eventName << L"] " << counter++ << std :: endl;
         std::wcout << L"Process Id: " << processId << std :: endl;
         std::wcout << L"Path: " << NormalizeFilePath(path) << std :: endl;
+        return true;
     };
 
     void PrintRename(const std::wstring& oldPath, const std::wstring& newPath, uint32_t processId) {
+        if ((oldPath.empty() && newPath.empty()) ||
+            IsSameOrInsideFolder(oldPath, L"C:\\Windows") ||
+            IsSameOrInsideFolder(newPath, L"C:\\Windows")) {
+            return;
+        }
         std::wcout << std :: endl << L"[RENAME]" << std :: endl;
         std::wcout << counter++ << std :: endl;
         std::wcout << L"Process Id: " << processId << std :: endl;
 
         if (!oldPath.empty()) {
             std::wcout << L"Old path: " << NormalizeFilePath(oldPath) << std :: endl;
-        } else {
-            std::wcout << L"Old path: <unknown>" << std :: endl;
         }
 
         if (!newPath.empty()) {
             std::wcout << L"New path: " << NormalizeFilePath(newPath) << std :: endl;
-        } else {
-            std::wcout << L"New path: <unknown>" << std :: endl;
         }
     };
 
@@ -105,4 +111,19 @@ static const std::wstring workingDirStr = NormalizeFilePath(workingDir);
 
         return false;
     }
+}
+
+namespace FileHandlerCommon {
+std::wstring ResolveFilePath(krabs::parser& parser) {
+    uint64_t fileObject = 0;
+    uint64_t fileKey = 0;
+    TryParsePointer(parser, L"FileObject", fileObject);
+    TryParsePointer(parser, L"FileKey", fileKey);
+    auto object = file_object_to_path.find(fileObject);
+    if (object != file_object_to_path.end() && !object->second.empty()) {
+        return object->second;
+    }
+    auto key = file_key_to_path.find(fileKey);
+    return key == file_key_to_path.end() ? L"" : key->second;
+}
 }
