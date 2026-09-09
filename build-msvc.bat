@@ -16,6 +16,7 @@ set "HCS_SANDBOX_OBJ=HcsSandbox\HcsSandbox.obj"
 set "START_PROCESS_OBJ=StartProcess\StartProcess.obj"
 set "NORMALIZE_PATH_OBJ=NormalizePath\NormalizePath.obj"
 set "FILTER_FILES_OBJ=FilterFiles\FilterFiles.obj"
+set "KERNEL_FILE_PROVIDER_OBJ=KernelFileProvider\KernelFileProvider.obj"
 set "PROVIDER_EVENTS_HANDLERS_OBJ=ProviderEventsHandlers\ProviderEventsHandlers.obj"
 set "PDB=%PROJECT_OUTPUT_NAME%.pdb"
 
@@ -66,7 +67,15 @@ cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
   /Fd"%PDB%"
 if errorlevel 1 exit /b %errorlevel%
 
-link /nologo "%MAIN_OBJ%" "%HCS_SANDBOX_OBJ%" "%START_PROCESS_OBJ%" "%NORMALIZE_PATH_OBJ%" "%FILTER_FILES_OBJ%" "%PROVIDER_EVENTS_HANDLERS_OBJ%" ^
+cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
+  /I "%~dp0krabs" ^
+  /I "%~dp0." ^
+  /c "KernelFileProvider\KernelFileProvider.cpp" ^
+  /Fo"%KERNEL_FILE_PROVIDER_OBJ%" ^
+  /Fd"%PDB%"
+if errorlevel 1 exit /b %errorlevel%
+
+link /nologo "%MAIN_OBJ%" "%KERNEL_FILE_PROVIDER_OBJ%" "%HCS_SANDBOX_OBJ%" "%START_PROCESS_OBJ%" "%NORMALIZE_PATH_OBJ%" "%FILTER_FILES_OBJ%" "%PROVIDER_EVENTS_HANDLERS_OBJ%" ^
   /OUT:"%PROJECT_OUTPUT_EXE%" ^
   tdh.lib advapi32.lib ole32.lib shell32.lib
 if errorlevel 1 exit /b %errorlevel%
