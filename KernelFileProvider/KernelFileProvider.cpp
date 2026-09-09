@@ -1,5 +1,5 @@
 #include "KernelFileProvider.h"
-#include "../ProviderEventsHandlers/ProviderEventsHandlers.h"
+#include "ProviderEventsHandlers/ProviderEventsHandlers.h"
 #include "../StartProcess/StartProcess.h"
 
 #include <exception>
@@ -10,6 +10,8 @@ KernelFileProvider::KernelFileProvider(
     std::atomic_bool& sandboxReexecutionRequested
 ) : provider_(L"Microsoft-Windows-Kernel-File") {
     provider_.any(
+        0x100 | // Read
+        0x200 | // Write
         0x20  | // File I/O
         0x40  | // OperationEnd (correlates Create/Open status)
         0x80  | // Create/Open
@@ -29,25 +31,25 @@ KernelFileProvider::KernelFileProvider(
             uint32_t processId = (record.EventHeader.ProcessId);
             bool isValid = true;
             if (schema.event_id() == 24) {
-                // OperationEnd can be delivered with a provider/system PID.
-                // The handler only accepts IRPs previously captured from this job.
+                // The original handler correlates only protected creates captured from this job.
                 isValid = OperationEndHandler(parser);
             } else {
                 if (!IsProcessInJob(managedProcess.job, processId)) {
                     return;
                 }
-
-                if (schema.event_id() == 12) {
-                    isValid = CreateOpenHandler(parser, processId);
-                } else if (schema.event_id() == 30) {
-                    isValid = CreateNewFileHandler(parser, processId);
-                } else if (schema.event_id() == 27) {
-                    isValid = RenamePathHandler(parser, processId);
-                } else if (schema.event_id() == 19) {
-                    isValid = RenameHandler(parser, processId);
+                switch (schema.event_id()) {
+                case 12: isValid = CreateOpenHandler(parser, processId); break;
+                case 14: isValid = CloseHandler(parser, processId); break;
+                case 15: isValid = ReadHandler(parser, processId); break;
+                case 16: isValid = WriteHandler(parser, processId); break;
+                case 19:
+                case 29: isValid = RenameHandler(parser, processId); break;
+                case 26: isValid = DeletePathHandler(parser, processId); break;
+                case 27: isValid = RenamePathHandler(parser, processId); break;
+                case 30: isValid = CreateNewFileHandler(parser, processId); break;
+                default: break;
                 }
             }
-
             if (!isValid && !sandboxReexecutionRequested.exchange(true)) {
                 std::wcout << L"[ALERT] Proces pristupa folderu van radnog direktorijuma!" << std::endl;
                 std::wcout << L"Gasim trenutni JobObject i prelazim na HCS sandbox." << std::endl;

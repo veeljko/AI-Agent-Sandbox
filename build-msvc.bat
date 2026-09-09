@@ -18,7 +18,7 @@ set "START_PROCESS_OBJ=StartProcess\StartProcess.obj"
 set "NORMALIZE_PATH_OBJ=NormalizePath\NormalizePath.obj"
 set "FILTER_FILES_OBJ=FilterFiles\FilterFiles.obj"
 set "KERNEL_FILE_PROVIDER_OBJ=KernelFileProvider\KernelFileProvider.obj"
-set "PROVIDER_EVENTS_HANDLERS_OBJ=ProviderEventsHandlers\ProviderEventsHandlers.obj"
+call "%~dp0kernel-file-handler-sources.bat"
 set "PDB=%PROJECT_OUTPUT_NAME%.pdb"
 
 cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
@@ -60,12 +60,10 @@ cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
   /Fd"%PDB%"
 if errorlevel 1 exit /b %errorlevel%
 
-cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
-  /I "%~dp0krabs" ^
-  /I "%~dp0." ^
-  /c "ProviderEventsHandlers\ProviderEventsHandlers.cpp" ^
-  /Fo"%PROVIDER_EVENTS_HANDLERS_OBJ%" ^
-  /Fd"%PDB%"
+cl /nologo /EHsc /std:c++17 /Zi /FS /MP2 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
+  /I "%~dp0krabs" /I "%~dp0." ^
+  /c %KERNEL_FILE_HANDLER_SOURCES% ^
+  /Fo"KernelFileProvider/ProviderEventsHandlers/" /Fd"%PDB%"
 if errorlevel 1 exit /b %errorlevel%
 
 cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
@@ -82,7 +80,7 @@ cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
   /Fd"%PDB%"
 if errorlevel 1 exit /b %errorlevel%
 
-link /nologo "%MAIN_OBJ%" "%PROCESS_CONTEXT_OBJ%" "%KERNEL_FILE_PROVIDER_OBJ%" "%HCS_SANDBOX_OBJ%" "%START_PROCESS_OBJ%" "%NORMALIZE_PATH_OBJ%" "%FILTER_FILES_OBJ%" "%PROVIDER_EVENTS_HANDLERS_OBJ%" ^
+link /nologo "%MAIN_OBJ%" "%PROCESS_CONTEXT_OBJ%" "%KERNEL_FILE_PROVIDER_OBJ%" "%HCS_SANDBOX_OBJ%" "%START_PROCESS_OBJ%" "%NORMALIZE_PATH_OBJ%" "%FILTER_FILES_OBJ%" %KERNEL_FILE_HANDLERS_OBJ% ^
   /OUT:"%PROJECT_OUTPUT_EXE%" ^
   tdh.lib advapi32.lib ole32.lib shell32.lib
 if errorlevel 1 exit /b %errorlevel%

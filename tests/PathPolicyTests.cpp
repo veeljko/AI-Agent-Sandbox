@@ -1,6 +1,6 @@
 #include "../FilterFiles/FilterFiles.h"
 #include "../NormalizePath/NormalizePath.h"
-#include "../ProviderEventsHandlers/FileCreatePolicy.h"
+#include "../KernelFileProvider/ProviderEventsHandlers/FileCreatePolicy.h"
 
 #include <windows.h>
 
