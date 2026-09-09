@@ -1,6 +1,8 @@
 #include "CreateOpenHandler.h"
 #include "../Common/HandlerCommon.h"
 #include <utility>
+#include <iostream>
+#include <iomanip>
 
 using namespace FileHandlerCommon;
 
@@ -12,7 +14,7 @@ bool CreateOpenHandler(krabs::parser& parser, uint32_t processId){
     uint32_t raw = 0;
 
     parser.try_parse(L"FileName", filePath);
-    parser.try_parse(L"CreateOptions", raw);
+    const bool hasCreateOptions = parser.try_parse(L"CreateOptions", raw);
     if (!TryParsePointer(parser, L"Irp", irp)) {
         TryParsePointer(parser, L"IrpPtr", irp);
     }
@@ -27,8 +29,14 @@ bool CreateOpenHandler(krabs::parser& parser, uint32_t processId){
 
     // Event 12 reports an attempt, not a successful read. Keep that distinction
     // visible even for allowed paths, so child-process opens can be diagnosed.
-    if (!normalizedPath.empty()) {
-        PrintAccess(L"CREATE/OPEN REQUEST", normalizedPath, processId);
+    const wchar_t* eventName = hasCreateOptions && IsDeleteOnCloseOptions(raw)
+        ? L"DELETE ON CLOSE REQUEST" : L"CREATE/OPEN REQUEST";
+    if (PrintAccess(eventName, normalizedPath, processId)) {
+        if (hasCreateOptions) {
+            std::wcout << L"CreateOptions: 0x" << std::hex << raw << std::dec << std::endl;
+        } else {
+            std::wcout << L"CreateOptions: <unavailable>" << std::endl;
+        }
     }
 
     if (IsProtectedOutsideWorkingDir(normalizedPath) && irp != 0) {

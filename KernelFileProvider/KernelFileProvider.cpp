@@ -54,6 +54,9 @@ KernelFileProvider::KernelFileProvider(
                 case 14: isValid = CloseHandler(parser, processId); break;
                 case 15: isValid = ReadHandler(parser, processId); break;
                 case 16: isValid = WriteHandler(parser, processId); break;
+                case 17: isValid = SetInformationHandler(parser, processId); break;
+                case 18: isValid = SetDeleteHandler(parser, processId); break;
+                case 19:
                 case 29: isValid = RenameHandler(parser, processId); break;
                 case 26: isValid = DeletePathHandler(parser, processId); break;
                 case 27: isValid = RenamePathHandler(parser, processId); break;

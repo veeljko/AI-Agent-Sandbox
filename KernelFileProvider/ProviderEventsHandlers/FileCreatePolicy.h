@@ -8,6 +8,11 @@ inline bool IsDirectoryCreateOpenOptions(uint32_t rawCreateOptions) {
     return (createOptions & kFileDirectoryFile) != 0;
 }
 
+inline bool IsDeleteOnCloseOptions(uint32_t rawCreateOptions) {
+    constexpr uint32_t kFileDeleteOnClose = 0x00001000;
+    return (rawCreateOptions & kFileDeleteOnClose) != 0;
+}
+
 inline bool IsSuccessfulNtStatus(uint32_t status) {
     constexpr uint32_t kNtStatusSeverityErrorBit = 0x80000000;
     return (status & kNtStatusSeverityErrorBit) == 0;

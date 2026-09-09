@@ -11,3 +11,5 @@
 #include "CloseHandler/CloseHandler.h"
 #include "NameCreateHandler/NameCreateHandler.h"
 #include "NameDeleteHandler/NameDeleteHandler.h"
+#include "SetDeleteHandler/SetDeleteHandler.h"
+#include "SetInformationHandler/SetInformationHandler.h"

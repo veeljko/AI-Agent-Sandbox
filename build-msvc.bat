@@ -3,7 +3,9 @@ setlocal
 
 set "PROJECT_INPUT_SOURCE=%~1"
 set "PROJECT_OUTPUT_EXE=%~2"
-set "PROJECT_OUTPUT_NAME=%~n2"
+if not defined PROJECT_INPUT_SOURCE set "PROJECT_INPUT_SOURCE=%~dp0main.cpp"
+if not defined PROJECT_OUTPUT_EXE set "PROJECT_OUTPUT_EXE=%~dp0main.exe"
+for %%F in ("%PROJECT_OUTPUT_EXE%") do set "PROJECT_OUTPUT_NAME=%%~nF"
 
 call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 exit /b %errorlevel%
@@ -11,15 +13,19 @@ if errorlevel 1 exit /b %errorlevel%
 pushd "%~dp0"
 if errorlevel 1 exit /b %errorlevel%
 
-set "PROCESS_CONTEXT_OBJ=ProcessContext\ProcessContext.obj"
-set "MAIN_OBJ=%PROJECT_OUTPUT_NAME%.obj"
-set "HCS_SANDBOX_OBJ=HcsSandbox\HcsSandbox.obj"
-set "START_PROCESS_OBJ=StartProcess\StartProcess.obj"
-set "NORMALIZE_PATH_OBJ=NormalizePath\NormalizePath.obj"
-set "FILTER_FILES_OBJ=FilterFiles\FilterFiles.obj"
-set "KERNEL_FILE_PROVIDER_OBJ=KernelFileProvider\KernelFileProvider.obj"
+set "BUILD_OBJ_DIR=%~dp0build\%PROJECT_OUTPUT_NAME%\obj"
+if not exist "%BUILD_OBJ_DIR%" mkdir "%BUILD_OBJ_DIR%"
+if errorlevel 1 exit /b %errorlevel%
+
+set "PROCESS_CONTEXT_OBJ=%BUILD_OBJ_DIR%\ProcessContext.obj"
+set "MAIN_OBJ=%BUILD_OBJ_DIR%\main.obj"
+set "HCS_SANDBOX_OBJ=%BUILD_OBJ_DIR%\HcsSandbox.obj"
+set "START_PROCESS_OBJ=%BUILD_OBJ_DIR%\StartProcess.obj"
+set "NORMALIZE_PATH_OBJ=%BUILD_OBJ_DIR%\NormalizePath.obj"
+set "FILTER_FILES_OBJ=%BUILD_OBJ_DIR%\FilterFiles.obj"
+set "KERNEL_FILE_PROVIDER_OBJ=%BUILD_OBJ_DIR%\KernelFileProvider.obj"
 call "%~dp0kernel-file-handler-sources.bat"
-set "PDB=%PROJECT_OUTPUT_NAME%.pdb"
+set "PDB=%BUILD_OBJ_DIR%\compiler.pdb"
 
 cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
   /I "%~dp0krabs" ^
@@ -63,7 +69,7 @@ if errorlevel 1 exit /b %errorlevel%
 cl /nologo /EHsc /std:c++17 /Zi /FS /MP2 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
   /I "%~dp0krabs" /I "%~dp0." ^
   /c %KERNEL_FILE_HANDLER_SOURCES% ^
-  /Fo"KernelFileProvider/ProviderEventsHandlers/" /Fd"%PDB%"
+  /Fo"%BUILD_OBJ_DIR%/" /Fd"%PDB%"
 if errorlevel 1 exit /b %errorlevel%
 
 cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^

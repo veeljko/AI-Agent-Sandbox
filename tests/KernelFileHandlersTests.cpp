@@ -22,7 +22,7 @@ int main() {
     struct Case { size_t id; Handler handler; };
     const Case cases[] = {
         {12, CreateOpenHandler}, {14, CloseHandler}, {15, ReadHandler},
-        {16, WriteHandler}, {19, RenameHandler}, {26, DeletePathHandler},
+        {16, WriteHandler}, {17, SetInformationHandler}, {18, SetDeleteHandler}, {19, RenameHandler}, {26, DeletePathHandler},
         {27, RenamePathHandler}, {29, RenameHandler}, {30, CreateNewFileHandler}
     };
     for (const auto& test : cases) {
@@ -34,6 +34,25 @@ int main() {
             assert(test.handler(parser, 42));
         }
     }
+    // An open request may carry deletion intent without a SetInformation event.
+    for (uint32_t options : {uint32_t{0x01000020}, uint32_t{0x01001020}}) {
+        assert(IsDeleteOnCloseOptions(options) == (options == 0x01001020));
+        krabs::testing::record_builder builder(provider, 12, 1);
+        builder.add_properties()
+            (L"FileName", std::wstring(workingDir) + L"\\delete-options-test.txt")
+            (L"CreateOptions", options);
+        auto event = builder.pack_incomplete();
+        krabs::schema schema(event, locator);
+        krabs::parser parser(schema);
+        std::wostringstream captured;
+        auto* previous = std::wcout.rdbuf(captured.rdbuf());
+        assert(CreateOpenHandler(parser, 42));
+        std::wcout.rdbuf(previous);
+        const bool hasDeleteLabel = captured.str().find(L"DELETE ON CLOSE REQUEST") != std::wstring::npos;
+        assert(hasDeleteLabel == IsDeleteOnCloseOptions(options));
+        assert(captured.str().find(L"CreateOptions: 0x") != std::wstring::npos);
+    }
+
     // Directory opens must populate the map even though they bypass file policy.
     krabs::testing::record_builder directoryBuilder(provider, 12, 1);
     directoryBuilder.add_properties()
@@ -77,6 +96,50 @@ int main() {
     krabs::parser deleteNameParser(deleteNameSchema);
     assert(NameDeleteHandler(deleteNameParser, 4));
     assert(FileHandlerCommon::file_key_to_path.count(0xB001) == 0);
+
+    // Request logs must work for allowed workspace paths, not just protected folders.
+    const std::wstring oldPath = std::wstring(workingDir) + L"\\kopija.txt";
+    const std::wstring newPath = std::wstring(workingDir) + L"\\preimenovan.txt";
+    FileHandlerCommon::file_key_to_path[0xC001] = oldPath;
+    for (size_t id : {size_t{18}, size_t{19}, size_t{29}}) {
+        krabs::testing::record_builder builder(provider, id, 1);
+        builder.add_properties()(L"FileKey", reinterpret_cast<void*>(0xC001));
+        auto event = builder.pack_incomplete();
+        krabs::schema schema(event, locator);
+        krabs::parser parser(schema);
+        std::wostringstream captured;
+        auto* previous = std::wcout.rdbuf(captured.rdbuf());
+        assert(id == 18 ? SetDeleteHandler(parser, 42) : RenameHandler(parser, 42));
+        std::wcout.rdbuf(previous);
+        assert(captured.str().find(L"kopija.txt") != std::wstring::npos);
+        assert(captured.str().find(id == 18 ? L"SETDELETE REQUEST" : L"RENAME") != std::wstring::npos);
+    }
+    for (uint32_t infoClass : {uint32_t{13}, uint32_t{64}}) {
+        krabs::testing::record_builder builder(provider, 17, 1);
+        builder.add_properties()
+            (L"FileKey", reinterpret_cast<void*>(0xC001))
+            (L"InfoClass", infoClass);
+        auto event = builder.pack_incomplete();
+        krabs::schema schema(event, locator);
+        krabs::parser parser(schema);
+        std::wostringstream captured;
+        auto* previous = std::wcout.rdbuf(captured.rdbuf());
+        assert(SetInformationHandler(parser, 42));
+        std::wcout.rdbuf(previous);
+        assert(captured.str().find(L"SETINFORMATION REQUEST") != std::wstring::npos);
+        assert(captured.str().find(L"kopija.txt") != std::wstring::npos);
+        assert(captured.str().find(L"FileDispositionInformation") != std::wstring::npos);
+    }
+    krabs::testing::record_builder renameBuilder(provider, 27, 1);
+    renameBuilder.add_properties()
+        (L"FileKey", reinterpret_cast<void*>(0xC001))
+        (L"FileObject", reinterpret_cast<void*>(0xC002))
+        (L"FilePath", newPath);
+    auto renameEvent = renameBuilder.pack_incomplete();
+    krabs::schema renameSchema(renameEvent, locator);
+    krabs::parser renameParser(renameSchema);
+    assert(RenamePathHandler(renameParser, 42));
+    assert(FileHandlerCommon::file_object_to_path.at(0xC002) == newPath);
 
     const uint64_t irp = 0x1234;
     const uint64_t fileObject = 0x5678;
