@@ -15,6 +15,7 @@ struct ManagedJobProcess {
     bool jobMonitorSucceeded = false;
     DWORD processId = 0;
     DWORD threadId = 0;
+    std::wstring commandLine;
 };
 extern const wchar_t workingDir[];
 bool StartCmdSuspendedInJob(

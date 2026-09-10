@@ -30,3 +30,6 @@ Win32/
 
 # Keep vendored tooling
 !krabs/.nuget/NuGet.exe
+
+# Compiler intermediates
+build/
