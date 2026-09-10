@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -14,33 +15,34 @@ const wchar_t workingDir[] = L"C:\\Users\\Korisnik\\Desktop\\test";
 
 namespace {
     std::mutex g_knownJobPidsMutex;
-    std::unordered_set<DWORD> g_knownJobPids;
+    std::unordered_map<HANDLE, std::unordered_set<DWORD>> g_knownJobPids;
 
     DWORD JobMessageProcessId(LPOVERLAPPED overlapped) {
         return static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(overlapped));
     }
 
-    void RememberJobPid(DWORD processId) {
+    void RememberJobPid(HANDLE job, DWORD processId) {
         if (processId == 0) {
             return;
         }
 
         std::lock_guard<std::mutex> lock(g_knownJobPidsMutex);
-        g_knownJobPids.insert(processId);
+        g_knownJobPids[job].insert(processId);
     }
 
-    void RememberJobPids(const std::vector<DWORD>& processIds) {
+    void RememberJobPids(HANDLE job, const std::vector<DWORD>& processIds) {
         std::lock_guard<std::mutex> lock(g_knownJobPidsMutex);
         for (DWORD processId : processIds) {
             if (processId != 0) {
-                g_knownJobPids.insert(processId);
+                g_knownJobPids[job].insert(processId);
             }
         }
     }
 
-    bool IsKnownJobPid(DWORD processId) {
+    bool IsKnownJobPid(HANDLE job, DWORD processId) {
         std::lock_guard<std::mutex> lock(g_knownJobPidsMutex);
-        return g_knownJobPids.find(processId) != g_knownJobPids.end();
+        auto found = g_knownJobPids.find(job);
+        return found != g_knownJobPids.end() && found->second.count(processId) != 0;
     }
 
     std::vector<wchar_t> BuildChildEnvironment(
@@ -120,8 +122,8 @@ bool MonitorJob(ManagedJobProcess& managedProcess) {
         DWORD messageProcessId = JobMessageProcessId(overlapped);
 
         if (message == JOB_OBJECT_MSG_NEW_PROCESS) {
-            RememberJobPid(messageProcessId);
-            std::wcout << L"[JOB] New process: " << messageProcessId << L"\n";
+            RememberJobPid(managedProcess.job, messageProcessId);
+            // Process lifecycle is reported once by KernelProcessProvider.
             // PrintProcessesInJob(managedProcess.job);
             continue;
         }
@@ -142,6 +144,7 @@ bool MonitorJob(ManagedJobProcess& managedProcess) {
 }
 
 std::vector<DWORD> GetProcessIdsInJob(HANDLE job) {
+    if (!job || job == INVALID_HANDLE_VALUE) return {};
     DWORD maxProcesses = 16;
 
     for (;;) {
@@ -159,7 +162,12 @@ std::vector<DWORD> GetProcessIdsInJob(HANDLE job) {
                 processList,
                 bufferSize,
                 nullptr)) {
-            std::cerr << "QueryInformationJobObject failed. GetLastError = " << GetLastError() << '\n';
+            const DWORD error = GetLastError();
+            if (error == ERROR_MORE_DATA) {
+                maxProcesses = (std::max)(maxProcesses * 2, processList->NumberOfAssignedProcesses + 8);
+                continue;
+            }
+            std::cerr << "QueryInformationJobObject failed. GetLastError = " << error << '\n';
             return {};
         }
 
@@ -175,35 +183,36 @@ std::vector<DWORD> GetProcessIdsInJob(HANDLE job) {
             processIds.push_back(static_cast<DWORD>(processList->ProcessIdList[i]));
         }
 
-        RememberJobPids(processIds);
+        RememberJobPids(job, processIds);
         return processIds;
     }
 }
 
 bool IsProcessInJob(HANDLE job, DWORD processId) {
-    // Prvo proveri cache svih PID-eva koji su ikada bili u job-u.
-    // Ovo je bitno za ETW, jer event za kratkotrajan proces moze da stigne
-    // nakon sto je proces vec izasao iz JobObject-a.
-    if (IsKnownJobPid(processId)) {
+    if (!job || job == INVALID_HANDLE_VALUE || !processId) return false;
+    // Validate live PIDs against the actual job. A recycled PID must not be
+    // accepted solely because a previous process with that PID belonged to it.
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+    if (process) {
+        BOOL inJob = FALSE;
+        const BOOL queried = ::IsProcessInJob(process, job, &inJob);
+        CloseHandle(process);
+        if (queried) {
+            if (inJob) RememberJobPid(job, processId);
+            return inJob != FALSE;
+        }
+    } else if (GetLastError() == ERROR_INVALID_PARAMETER && IsKnownJobPid(job, processId)) {
+        // Short-lived process already exited; retain it for delayed ETW events.
         return true;
     }
-
-    std::vector<DWORD> processIds = GetProcessIdsInJob(job);
-
-    for (DWORD jobProcessId : processIds) {
-        if (jobProcessId == processId) {
-            RememberJobPid(processId);
-            return true;
-        }
-    }
-
-    return false;
+    const auto processIds = GetProcessIdsInJob(job);
+    return std::find(processIds.begin(), processIds.end(), processId) != processIds.end();
 }
 
 void PrintProcessesInJob(HANDLE job) {
     return;
     std::vector<DWORD> processIds = GetProcessIdsInJob(job);
-    RememberJobPids(processIds);
+    RememberJobPids(job, processIds);
 
     std::wcout << L"Processes in JobObject: " << processIds.size() << L"\n";
     for (DWORD processId : processIds) {
@@ -231,6 +240,7 @@ bool StartCmdSuspendedInJob(
     }
 
     wchar_t cmdLine[] = L"C:\\Windows\\System32\\cmd.exe";
+    const std::wstring originalCommandLine = cmdLine;
     if (!CreateProcessW(
             nullptr,
             cmdLine,
@@ -250,6 +260,7 @@ bool StartCmdSuspendedInJob(
     managedProcess.mainThread = pi.hThread;
     managedProcess.processId = pi.dwProcessId;
     managedProcess.threadId = pi.dwThreadId;
+    managedProcess.commandLine = originalCommandLine;
 
     managedProcess.job = CreateJobObjectW(nullptr, nullptr);
     if (managedProcess.job == nullptr) {
@@ -290,7 +301,7 @@ bool StartCmdSuspendedInJob(
     }
 
     // Obavezno odmah zapamti glavni PID. Nemoj se oslanjati samo na completion-port poruku.
-    RememberJobPid(managedProcess.processId);
+    RememberJobPid(managedProcess.job, managedProcess.processId);
 
     try {
         managedProcess.jobMonitorSucceeded = false;
@@ -388,6 +399,10 @@ void CloseManagedJobProcess(ManagedJobProcess& managedProcess) {
     }
 
     if (managedProcess.job != nullptr) {
+        {
+            std::lock_guard<std::mutex> lock(g_knownJobPidsMutex);
+            g_knownJobPids.erase(managedProcess.job);
+        }
         CloseHandle(managedProcess.job);
         managedProcess.job = nullptr;
     }

@@ -1,12 +1,12 @@
 #include "HcsSandbox/HcsSandbox.h"
 #include "StartProcess/StartProcess.h"
 #include "KernelFileProvider/KernelFileProvider.h"
+#include "KernelProcessProvider/KernelProcessProvider.h"
 #include "krabs/krabs.hpp"
 
 #include <iostream>
 #include <thread>
 #include <exception>
-#include <chrono>
 #include <atomic>
 #include <string>
 
@@ -51,39 +51,52 @@ int main() {
         return 1;
     }
 
+    KernelProcessProvider kernelProcessProvider(managedProcess);
+    if (!kernelProcessProvider.BootstrapRoot()) {
+        std::cerr << "Could not register the root process context." << std::endl;
+        TerminateManagedJob(managedProcess, 1);
+        WaitForManagedJobToFinish(managedProcess);
+        CloseManagedJobProcess(managedProcess);
+        return 1;
+    }
+
     krabs::user_trace trace(trace_name);
     KernelFileProvider kernelFileProvider(
         managedProcess,
         sandboxReexecutionRequested
     );
+    kernelProcessProvider.Enable(trace);
     kernelFileProvider.Enable(trace);
 
-    std::exception_ptr trace_exception = nullptr;
-
-    std::thread traceThread([&trace, &trace_exception]() {
-        try {
-            trace.start();
-        } catch (...) {
-            trace_exception = std::current_exception();
-        }
-    });
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    if (trace_exception) {
-        traceThread.join();
-        TerminateProcess(managedProcess.process, 1);
+    // Register both providers before the suspended root can spawn any children.
+    try {
+        trace.open();
+    } catch (const std::exception& ex) {
+        std::cerr << "Trace open error: " << ex.what() << std::endl;
+        TerminateManagedJob(managedProcess, 1);
         WaitForManagedJobToFinish(managedProcess);
         CloseManagedJobProcess(managedProcess);
+        return 1;
+    }
 
-        try {
-            std::rethrow_exception(trace_exception);
-        } catch (const std::exception& ex) {
-            std::cerr << "Trace error: " << ex.what() << std::endl;
-            return 1;
-        } catch (...) {
-            std::cerr << "Trace error: unknown exception" << std::endl;
-            return 1;
-        }
+    std::exception_ptr trace_exception = nullptr;
+    std::thread traceThread;
+    try {
+        traceThread = std::thread([&trace, &trace_exception, &managedProcess]() {
+            try {
+                trace.process();
+            } catch (...) {
+                trace_exception = std::current_exception();
+                TerminateManagedJob(managedProcess, 1);
+            }
+        });
+    } catch (const std::exception& ex) {
+        std::cerr << "Trace thread error: " << ex.what() << std::endl;
+        trace.stop();
+        TerminateManagedJob(managedProcess, 1);
+        WaitForManagedJobToFinish(managedProcess);
+        CloseManagedJobProcess(managedProcess);
+        return 1;
     }
 
     std::wcout << L"Trace radi. Pratim procese iz JobObject-a." << std::endl;

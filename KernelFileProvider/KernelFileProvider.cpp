@@ -1,5 +1,6 @@
 #include "KernelFileProvider.h"
 #include "ProviderEventsHandlers/ProviderEventsHandlers.h"
+#include "ProviderEventsHandlers/Common/FileEventRecorder.h"
 #include "../StartProcess/StartProcess.h"
 
 #include <exception>
@@ -33,23 +34,23 @@ KernelFileProvider::KernelFileProvider(
             uint32_t processId = (record.EventHeader.ProcessId);
             // Name events describe shared file keys; their PID need not belong to our job.
             // Use them only for path correlation. Actual I/O remains filtered by job.
-            if (schema.event_id() == 10) {
-                NameCreateHandler(parser, processId);
+            switch (schema.event_id()){
+                case 10: NameCreateHandler(parser, processId); return;
+                case 11: NameDeleteHandler(parser, processId); return;
+                default: break;   
+            }
+
+
+            // Completion headers may contain a system PID. The handler accepts only
+            // IRPs previously captured from a monitored process, not arbitrary completions.
+            if (schema.event_id() != 24 && !IsProcessInJob(managedProcess.job, processId)) {
                 return;
             }
-            if (schema.event_id() == 11) {
-                NameDeleteHandler(parser, processId);
-                return;
-            }
+
+            
+            RecordFileEvent(schema.event_id(), parser, processId);
             bool isValid = true;
-            if (schema.event_id() == 24) {
-                // The original handler correlates only protected creates captured from this job.
-                isValid = OperationEndHandler(parser);
-            } else {
-                if (!IsProcessInJob(managedProcess.job, processId)) {
-                    return;
-                }
-                switch (schema.event_id()) {
+            switch (schema.event_id()) {
                 case 12: isValid = CreateOpenHandler(parser, processId); break;
                 case 14: isValid = CloseHandler(parser, processId); break;
                 case 15: isValid = ReadHandler(parser, processId); break;
@@ -58,11 +59,11 @@ KernelFileProvider::KernelFileProvider(
                 case 18: isValid = SetDeleteHandler(parser, processId); break;
                 case 19:
                 case 29: isValid = RenameHandler(parser, processId); break;
+                case 24: isValid = OperationEndHandler(parser); break;
                 case 26: isValid = DeletePathHandler(parser, processId); break;
                 case 27: isValid = RenamePathHandler(parser, processId); break;
                 case 30: isValid = CreateNewFileHandler(parser, processId); break;
                 default: break;
-                }
             }
             if (!isValid && !sandboxReexecutionRequested.exchange(true)) {
                 std::wcout << L"[ALERT] Proces pristupa folderu van radnog direktorijuma!" << std::endl;

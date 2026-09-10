@@ -3,6 +3,46 @@
 
 #include <utility>
 
+std::optional<ProcessContextStore::Registration> ProcessContextStore::Register(
+    const ManagedJobProcess& managedProcess, ProcessContext context
+) {
+    if (!context.pid || !context.createTimeTicks || !managedProcess.job ||
+        managedProcess.job == INVALID_HANDLE_VALUE ||
+        !IsProcessInJob(managedProcess.job, context.pid)) {
+        return std::nullopt;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& entry : contexts_) {
+        auto& existing = entry.second;
+        if (existing.pid == context.pid && existing.createTimeTicks == context.createTimeTicks) {
+            if (context.parentPid) existing.parentPid = context.parentPid;
+            if (context.processSequenceNumber) existing.processSequenceNumber = context.processSequenceNumber;
+            if (!context.image.empty()) existing.image = std::move(context.image);
+            if (!context.commandLine.empty()) existing.commandLine = std::move(context.commandLine);
+            if (!context.userSid.empty()) existing.userSid = std::move(context.userSid);
+            if (!context.integritySid.empty()) existing.integritySid = std::move(context.integritySid);
+            return Registration{entry.first, false};
+        }
+    }
+    while (!nextKey_ || contexts_.count(nextKey_)) ++nextKey_;
+    const uint64_t key = nextKey_++;
+    context.uniqueProcessKey = key;
+    contexts_.emplace(key, std::move(context));
+    return Registration{key, true};
+}
+
+std::optional<uint64_t> ProcessContextStore::FindProcessKey(uint32_t pid, uint64_t createTimeTicks) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const ProcessContext* newest = nullptr;
+    for (const auto& entry : contexts_) {
+        const auto& context = entry.second;
+        if (context.pid != pid) continue;
+        if (createTimeTicks && context.createTimeTicks != createTimeTicks) continue;
+        if (!newest || context.createTimeTicks > newest->createTimeTicks) newest = &context;
+    }
+    return newest ? std::optional<uint64_t>(newest->uniqueProcessKey) : std::nullopt;
+}
+
 bool ProcessContextStore::Add(const ManagedJobProcess& managedProcess, ProcessContext context) {
     if (context.pid == 0 || context.uniqueProcessKey == 0 ||
         managedProcess.job == nullptr || managedProcess.job == INVALID_HANDLE_VALUE) {

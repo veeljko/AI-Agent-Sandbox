@@ -25,6 +25,7 @@ set "NORMALIZE_PATH_OBJ=%BUILD_OBJ_DIR%\NormalizePath.obj"
 set "FILTER_FILES_OBJ=%BUILD_OBJ_DIR%\FilterFiles.obj"
 set "KERNEL_FILE_PROVIDER_OBJ=%BUILD_OBJ_DIR%\KernelFileProvider.obj"
 call "%~dp0kernel-file-handler-sources.bat"
+call "%~dp0kernel-process-handler-sources.bat"
 set "PDB=%BUILD_OBJ_DIR%\compiler.pdb"
 
 cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
@@ -86,7 +87,13 @@ cl /nologo /EHsc /std:c++17 /Zi /FS /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
   /Fd"%PDB%"
 if errorlevel 1 exit /b %errorlevel%
 
-link /nologo "%MAIN_OBJ%" "%PROCESS_CONTEXT_OBJ%" "%KERNEL_FILE_PROVIDER_OBJ%" "%HCS_SANDBOX_OBJ%" "%START_PROCESS_OBJ%" "%NORMALIZE_PATH_OBJ%" "%FILTER_FILES_OBJ%" %KERNEL_FILE_HANDLERS_OBJ% ^
+cl /nologo /EHsc /std:c++17 /Zi /FS /MP2 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
+  /I "%~dp0krabs" /I "%~dp0." ^
+  /c %KERNEL_PROCESS_SOURCES% ^
+  /Fo"%BUILD_OBJ_DIR%/" /Fd"%PDB%"
+if errorlevel 1 exit /b %errorlevel%
+
+link /nologo "%MAIN_OBJ%" %KERNEL_PROCESS_OBJ% "%PROCESS_CONTEXT_OBJ%" "%KERNEL_FILE_PROVIDER_OBJ%" "%HCS_SANDBOX_OBJ%" "%START_PROCESS_OBJ%" "%NORMALIZE_PATH_OBJ%" "%FILTER_FILES_OBJ%" %KERNEL_FILE_HANDLERS_OBJ% ^
   /OUT:"%PROJECT_OUTPUT_EXE%" ^
   tdh.lib advapi32.lib ole32.lib shell32.lib
 if errorlevel 1 exit /b %errorlevel%
