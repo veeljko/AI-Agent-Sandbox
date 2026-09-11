@@ -4,7 +4,6 @@
 #include <iostream>
 #include <mutex>
 
-namespace KernelProcessHandlers {
 uint64_t FileTimeTicks(const FILETIME& time) {
     return (uint64_t{time.dwHighDateTime} << 32) | time.dwLowDateTime;
 }
@@ -59,7 +58,7 @@ void PrintProcess(const wchar_t* label, const ProcessContext& process) {
     if (process.exitCode) std::wcout << L" ExitCode=" << *process.exitCode;
     std::wcout << std::endl;
 }
-bool BootstrapRoot(HandlerContext& context) {
+bool BootstrapRootProcess(HandlerContext& context) {
     ProcessContext process;
     process.pid = context.managedProcess.processId;
     process.parentPid = GetCurrentProcessId();
@@ -104,5 +103,4 @@ std::optional<uint64_t> ResolveProcess(krabs::parser& parser, HandlerContext& co
 }
 bool ShouldPrintImage(const std::wstring& path) {
     return !path.empty() && !IsSameOrInsideFolder(path, L"C:\\Windows");
-}
 }

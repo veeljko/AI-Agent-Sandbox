@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <iostream>
 
-namespace KernelProcessHandlers {
 void ImageLoadHandler(krabs::parser& parser, HandlerContext& context) {
     auto key = ResolveProcess(parser, context);
     if (!key) return;
@@ -24,5 +23,4 @@ void ImageLoadHandler(krabs::parser& parser, HandlerContext& context) {
     if (inserted && ShouldPrintImage(image.path)) {
         std::wcout << L"[IMAGE LOAD] Key=" << *key << L" Path=" << image.path << L" Size=" << image.size << std::endl;
     }
-}
 }

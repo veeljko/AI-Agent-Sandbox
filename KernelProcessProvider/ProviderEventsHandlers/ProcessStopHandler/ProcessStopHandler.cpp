@@ -1,6 +1,5 @@
 #include "ProcessStopHandler.h"
 
-namespace KernelProcessHandlers {
 void ProcessStopHandler(krabs::parser& parser, HandlerContext& context) {
     uint32_t pid = 0;
     FILETIME created{}, exited{};
@@ -24,5 +23,4 @@ void ProcessStopHandler(krabs::parser& parser, HandlerContext& context) {
         }
     });
     PrintProcess(L"PROCESS STOP", *context.store.Find(*key));
-}
 }

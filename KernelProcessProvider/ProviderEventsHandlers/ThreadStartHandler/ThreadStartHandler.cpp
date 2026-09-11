@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <iostream>
 
-namespace KernelProcessHandlers {
 void ThreadStartHandler(krabs::parser& parser, HandlerContext& context) {
     auto key = ResolveProcess(parser, context);
     uint32_t tid = 0;
@@ -20,5 +19,4 @@ void ThreadStartHandler(krabs::parser& parser, HandlerContext& context) {
         }
     });
     if (inserted) std::wcout << L"[THREAD START] Key=" << *key << L" TID=" << tid << std::endl;
-}
 }

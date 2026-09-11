@@ -1,7 +1,6 @@
 #include "ImageUnloadHandler.h"
 #include <iostream>
 
-namespace KernelProcessHandlers {
 void ImageUnloadHandler(krabs::parser& parser, HandlerContext& context) {
     auto key = ResolveProcess(parser, context);
     krabs::pointer base{};
@@ -17,5 +16,4 @@ void ImageUnloadHandler(krabs::parser& parser, HandlerContext& context) {
         }
     });
     if (ShouldPrintImage(path)) std::wcout << L"[IMAGE UNLOAD] Key=" << *key << L" Path=" << path << std::endl;
-}
 }

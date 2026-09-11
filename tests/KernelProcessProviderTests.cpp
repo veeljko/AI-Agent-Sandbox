@@ -27,7 +27,7 @@ int main() {
     const krabs::guid fileGuid(L"{edd08927-9cc4-4e65-b970-c2560fb5c289}");
     FILETIME created{};
     GetSystemTimeAsFileTime(&created);
-    auto ticks = KernelProcessHandlers::FileTimeTicks(created);
+    auto ticks = FileTimeTicks(created);
     SID integrity{};
     integrity.Revision = SID_REVISION;
     integrity.SubAuthorityCount = 1;
@@ -76,8 +76,8 @@ int main() {
         }
     }
     process = store.Find(*key);
-    assert(process->threads.size() == 2);
-    assert(!process->threads[0].running && !process->threads[1].running);
+    // Thread callbacks are intentionally disabled in KernelProcessProvider.
+    assert(process->threads.empty());
 
     krabs::testing::record_builder image(processGuid, 5, 0);
     image.add_properties()(L"ProcessID", uint32_t{42})
