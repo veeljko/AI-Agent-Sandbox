@@ -53,7 +53,7 @@ KernelFileProvider::KernelFileProvider(
             switch (schema.event_id()) {
                 case 12: isValid = CreateOpenHandler(parser, processId); break;
                 case 14: isValid = CloseHandler(parser, processId); break;
-                case 15: isValid = ReadHandler(parser, processId); break;
+                // case 15: isValid = ReadHandler(parser, processId); break;
                 case 16: isValid = WriteHandler(parser, processId); break;
                 case 17: isValid = SetInformationHandler(parser, processId); break;
                 case 18: isValid = SetDeleteHandler(parser, processId); break;
