@@ -65,3 +65,7 @@ set_target_properties(main PROPERTIES
     PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/main.dir"
 )
+
+# HcsSandbox resolves these programs and support files relative to main.exe.
+add_subdirectory(HCS)
+add_dependencies(main hcs_tools)
