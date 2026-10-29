@@ -33,3 +33,4 @@ Win32/
 
 # Compiler intermediates
 build/
+/build/
