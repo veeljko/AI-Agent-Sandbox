@@ -79,6 +79,8 @@ int wmain(int argc, wchar_t** argv) {
         PROCESS_INFORMATION info{};
         Check(CreateProcessW(image.c_str(), command.data(), nullptr, nullptr, FALSE,
             0, nullptr, nullptr, &startup, &info) != FALSE, "CreateProcessW");
+
+            
         process.value = info.hProcess;
         primaryThread.value = info.hThread;
         std::wcout << L"[INJECTOR] PID=" << GetCurrentProcessId()
